@@ -1,96 +1,340 @@
-use crate::arena::DataArena;
-use crate::logic::{LogicError, Result, Token};
-use serde_json::Value as JsonValue;
-use std::collections::HashMap;
+//! Parser module for DataLogic expressions
+//!
+//! This module provides the basic building blocks for parsing logic expressions.
 
-pub mod jsonlogic;
-#[cfg(test)]
+use bumpalo::Bump;
+use datavalue_rs::DataValue;
+use std::fmt;
+use std::str::FromStr;
+use thiserror::Error;
+
+use crate::optimizer;
+
 mod tests;
 
-/// Trait that defines a parser for an expression language
-pub trait ExpressionParser: Send + Sync {
-    /// Parse the input string into a Token
-    fn parse<'a>(&self, input: &str, arena: &'a DataArena) -> Result<&'a Token<'a>>;
+pub mod jsonlogic;
 
-    /// Parse the input JSON into a Token
-    fn parse_json<'a>(&self, input: &JsonValue, arena: &'a DataArena) -> Result<&'a Token<'a>>;
+/// Result type for parser operations
+pub type Result<T> = std::result::Result<T, ParserError>;
 
-    /// Get the name of this parser format
-    fn format_name(&self) -> &'static str;
+/// Error types for parser operations
+#[derive(Error, Debug)]
+pub enum ParserError {
+    #[error("Parser error: {reason}")]
+    ParserError { reason: String },
+
+    #[error("Operator not found: {operator}")]
+    OperatorNotFoundError { operator: String },
+
+    #[error("Invalid operator arguments: {reason}")]
+    InvalidOperatorArgumentsError { reason: String },
 }
 
-/// Registry that manages parsers
-pub struct ParserRegistry {
-    parsers: HashMap<String, Box<dyn ExpressionParser>>,
-    default_parser: String,
+/// The type of operator
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OperatorType {
+    // Arithmetic operators
+    Add,      // +
+    Subtract, // -
+    Multiply, // *
+    Divide,   // /
+    Modulo,   // %
+    Min,      // min
+    Max,      // max
+    Abs,      // abs
+    Ceil,     // ceil
+    Floor,    // floor
+
+    // Comparison operators
+    Equal,          // ==
+    StrictEqual,    // ===
+    NotEqual,       // !=
+    StrictNotEqual, // !==
+    GT,             // >
+    GTE,            // >=
+    LT,             // <
+    LTE,            // <=
+
+    // Logic operators
+    If,
+    And,
+    Or,
+    Not,
+    // Special operators
+    Var,         // Variable access
+    Missing,     // Check if variables are missing
+    MissingAll,  // Check if all variables are missing
+    MissingSome, // Check if some variables are missing
+    Val,         // Evaluate a value
+    Exists,      // Check if a variable exists
+    Map,         // Map an array
+    Filter,      // Filter an array
+    Reduce,      // Reduce an array
+    All,         // Check if all items in an array match a condition
+    Some,        // Check if some items in an array match a condition
+    None,        // Check if no items in an array match a condition
+    Merge,       // Merge arrays
+    In,          // Check if a value is in an array
+    Cat,         // Concatenate strings
+    Log,         // Log a value (for debugging)
+    Custom,      // Custom operator
 }
 
-impl Default for ParserRegistry {
-    fn default() -> Self {
-        Self::new()
+impl FromStr for OperatorType {
+    type Err = ParserError;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s {
+            // Arithmetic operators
+            "+" => Ok(OperatorType::Add),
+            "-" => Ok(OperatorType::Subtract),
+            "*" => Ok(OperatorType::Multiply),
+            "/" => Ok(OperatorType::Divide),
+            "%" => Ok(OperatorType::Modulo),
+            "min" => Ok(OperatorType::Min),
+            "max" => Ok(OperatorType::Max),
+            "abs" => Ok(OperatorType::Abs),
+            "ceil" => Ok(OperatorType::Ceil),
+            "floor" => Ok(OperatorType::Floor),
+
+            // Comparison operators
+            "==" => Ok(OperatorType::Equal),
+            "===" => Ok(OperatorType::StrictEqual),
+            "!=" => Ok(OperatorType::NotEqual),
+            "!==" => Ok(OperatorType::StrictNotEqual),
+            ">" => Ok(OperatorType::GT),
+            ">=" => Ok(OperatorType::GTE),
+            "<" => Ok(OperatorType::LT),
+            "<=" => Ok(OperatorType::LTE),
+
+            // Logic operators
+            "if" => Ok(OperatorType::If),
+            "and" => Ok(OperatorType::And),
+            "or" => Ok(OperatorType::Or),
+            "not" => Ok(OperatorType::Not),
+            // Special operators
+            "var" => Ok(OperatorType::Var),
+            "missing" => Ok(OperatorType::Missing),
+            "missing_all" => Ok(OperatorType::MissingAll),
+            "missing_some" => Ok(OperatorType::MissingSome),
+            "val" => Ok(OperatorType::Val),
+            "exists" => Ok(OperatorType::Exists),
+            "map" => Ok(OperatorType::Map),
+            "filter" => Ok(OperatorType::Filter),
+            "reduce" => Ok(OperatorType::Reduce),
+            "all" => Ok(OperatorType::All),
+            "some" => Ok(OperatorType::Some),
+            "none" => Ok(OperatorType::None),
+            "merge" => Ok(OperatorType::Merge),
+            "in" => Ok(OperatorType::In),
+            "cat" => Ok(OperatorType::Cat),
+            "log" => Ok(OperatorType::Log),
+            _ => Err(ParserError::OperatorNotFoundError {
+                operator: s.to_string(),
+            }),
+        }
     }
 }
 
-impl ParserRegistry {
-    /// Create a new parser registry with JSONLogic as the default parser
-    pub fn new() -> Self {
-        let mut registry = Self {
-            parsers: HashMap::new(),
-            default_parser: "jsonlogic".to_string(),
+impl fmt::Display for OperatorType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let name = match self {
+            // Arithmetic operators
+            OperatorType::Add => "+",
+            OperatorType::Subtract => "-",
+            OperatorType::Multiply => "*",
+            OperatorType::Divide => "/",
+            OperatorType::Modulo => "%",
+            OperatorType::Min => "min",
+            OperatorType::Max => "max",
+            OperatorType::Abs => "abs",
+            OperatorType::Ceil => "ceil",
+            OperatorType::Floor => "floor",
+
+            // Logic operators
+            OperatorType::If => "if",
+            OperatorType::And => "and",
+            OperatorType::Or => "or",
+            OperatorType::Not => "not",
+            // Comparison operators
+            OperatorType::Equal => "==",
+            OperatorType::StrictEqual => "===",
+            OperatorType::NotEqual => "!=",
+            OperatorType::StrictNotEqual => "!==",
+            OperatorType::GT => ">",
+            OperatorType::GTE => ">=",
+            OperatorType::LT => "<",
+            OperatorType::LTE => "<=",
+            // Math operators
+            // Special operators
+            OperatorType::Var => "var",
+            OperatorType::Missing => "missing",
+            OperatorType::MissingAll => "missing_all",
+            OperatorType::MissingSome => "missing_some",
+            OperatorType::Val => "val",
+            OperatorType::Exists => "exists",
+            OperatorType::Map => "map",
+            OperatorType::Filter => "filter",
+            OperatorType::Reduce => "reduce",
+            OperatorType::All => "all",
+            OperatorType::Some => "some",
+            OperatorType::None => "none",
+            OperatorType::Merge => "merge",
+            OperatorType::In => "in",
+            OperatorType::Cat => "cat",
+            OperatorType::Log => "log",
+            OperatorType::Custom => "custom",
         };
+        write!(f, "{}", name)
+    }
+}
 
-        // Register the default JSONLogic parser
-        registry.register(Box::new(jsonlogic::JsonLogicParser));
+/// Token representing an expression component
+#[derive(Debug, PartialEq, Clone)]
+pub enum Token<'a> {
+    /// A literal value
+    Literal(DataValue<'a>),
 
-        registry
+    /// An array of tokens
+    ArrayLiteral(Vec<Box<Token<'a>>>),
+
+    /// A variable reference with an optional default value
+    Variable {
+        path: &'a DataValue<'a>,
+        default: Option<&'a DataValue<'a>>,
+        scope_jump: Option<usize>,
+    },
+
+    /// A dynamic variable reference where the path is computed at runtime
+    DynamicVariable {
+        path_expr: Box<Token<'a>>,
+        default: Option<Box<Token<'a>>>,
+        scope_jump: Option<usize>,
+    },
+
+    /// An operator with a name and arguments
+    Operator {
+        op_type: OperatorType,
+        args: Box<Token<'a>>,
+    },
+
+    /// A custom operator with a name and arguments
+    CustomOperator { name: &'a str, args: Box<Token<'a>> },
+}
+
+impl<'a> Token<'a> {
+    /// Create a new literal token
+    pub fn literal(value: DataValue<'a>) -> Self {
+        Token::Literal(value)
     }
 
-    /// Register a new parser
-    pub fn register(&mut self, parser: Box<dyn ExpressionParser>) {
-        let name = parser.format_name().to_string();
-        self.parsers.insert(name, parser);
-    }
-
-    /// Set the default parser
-    pub fn set_default(&mut self, format_name: &str) -> Result<()> {
-        if self.parsers.contains_key(format_name) {
-            self.default_parser = format_name.to_string();
-            Ok(())
-        } else {
-            Err(LogicError::ParseError {
-                reason: format!("Unknown parser format: {}", format_name),
-            })
+    /// Create a new variable token
+    pub fn variable(
+        path: &'a DataValue<'a>,
+        default: Option<&'a DataValue<'a>>,
+        scope_jump: Option<usize>,
+    ) -> Self {
+        Token::Variable {
+            path,
+            default,
+            scope_jump,
         }
     }
 
-    /// Parse an expression using the specified parser, or default if none specified
-    pub fn parse<'a>(
-        &self,
-        input: &str,
-        format: Option<&str>,
-        arena: &'a DataArena,
-    ) -> Result<&'a Token<'a>> {
-        let format = format.unwrap_or(&self.default_parser);
-
-        if let Some(parser) = self.parsers.get(format) {
-            parser.parse(input, arena)
-        } else {
-            Err(LogicError::ParseError {
-                reason: format!("Unknown parser format: {}", format),
-            })
+    /// Create a new dynamic variable token
+    pub fn dynamic_variable(
+        path_expr: Box<Token<'a>>,
+        default: Option<Box<Token<'a>>>,
+        scope_jump: Option<usize>,
+    ) -> Self {
+        Token::DynamicVariable {
+            path_expr,
+            default,
+            scope_jump,
         }
     }
 
-    pub fn parse_json<'a>(
-        &self,
-        input: &JsonValue,
-        format: Option<&str>,
-        arena: &'a DataArena,
-    ) -> Result<&'a Token<'a>> {
-        let format = format.unwrap_or(&self.default_parser);
-        let parser = self.parsers.get(format).ok_or(LogicError::ParseError {
-            reason: format!("Unknown parser format: {}", format),
-        })?;
-        parser.parse_json(input, arena)
+    /// Create a new operator token
+    pub fn operator(op_type: OperatorType, args: Box<Token<'a>>) -> Self {
+        Token::Operator { op_type, args }
     }
+
+    /// Create a new custom operator token
+    pub fn custom_operator(name: &'a str, args: Box<Token<'a>>) -> Self {
+        Token::CustomOperator { name, args }
+    }
+
+    pub fn is_operator(&self) -> bool {
+        matches!(self, Token::Operator { .. })
+    }
+
+    pub fn is_literal(&self) -> bool {
+        matches!(self, Token::Literal(_))
+    }
+
+    pub fn is_variable(&self) -> bool {
+        matches!(self, Token::Variable { .. })
+    }
+
+    pub fn is_dynamic_variable(&self) -> bool {
+        matches!(self, Token::DynamicVariable { .. })
+    }
+
+    pub fn is_custom_operator(&self) -> bool {
+        matches!(self, Token::CustomOperator { .. })
+    }
+
+    pub fn is_static_token(&self) -> bool {
+        // Static tokens are those that don't require runtime evaluation
+        match self {
+            // Literals are always static
+            Token::Literal(_) => true,
+
+            // Array literals are static if all their elements are static
+            Token::ArrayLiteral(items) => items.iter().all(|item| item.is_static_token()),
+
+            // Variables are never static as they access the context
+            Token::Variable { .. } => false,
+            Token::DynamicVariable { .. } => false,
+
+            // Operators are static if they don't access variables and all their arguments are static
+            Token::Operator { op_type, args } => {
+                // These operators access variables directly
+                match op_type {
+                    OperatorType::Var
+                    | OperatorType::Missing
+                    | OperatorType::MissingAll
+                    | OperatorType::MissingSome
+                    | OperatorType::Exists => false,
+
+                    // For other operators, check if their arguments are static
+                    _ => args.is_static_token(),
+                }
+            }
+
+            // Custom operators are considered non-static by default
+            Token::CustomOperator { .. } => false,
+        }
+    }
+}
+
+/// Parse a JSON string into a JSONLogic Token
+pub fn parser<'a>(input: &str, arena: &'a Bump) -> Result<&'a Token<'a>> {
+    let data_value = DataValue::from_str(arena, input).map_err(|e| ParserError::ParserError {
+        reason: format!("Invalid JSON: {}", e),
+    })?;
+
+    // Parse the DataValue
+    parser_value(&data_value, arena)
+}
+
+/// Parse a DataValue into a JSONLogic Token
+pub fn parser_value<'a>(input: &DataValue<'a>, arena: &'a Bump) -> Result<&'a Token<'a>> {
+    let token = jsonlogic::parse_datavalue_internal(input, arena)?;
+    Ok(arena.alloc(token))
+}
+
+pub fn optimize_token<'a>(token: &'a Token<'a>, arena: &'a Bump) -> Result<Box<Token<'a>>> {
+    let optimized = optimizer::optimize(token, arena);
+    Ok(optimized)
 }

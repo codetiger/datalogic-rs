@@ -1,0 +1,555 @@
+//! Stack-based instruction execution for JSONLogic
+//!
+//! This module provides the stack data structure and operations for
+//! non-recursive evaluation of JSONLogic expressions.
+
+use crate::operators::arithmetic;
+use crate::parser::{OperatorType, Token};
+use bumpalo::Bump;
+use datavalue_rs::{DataValue, Result};
+
+/// Represents an instruction on the evaluation stack
+#[derive(Debug)]
+enum Instruction<'a> {
+    /// Evaluate a token
+    Evaluate(&'a Token<'a>),
+
+    /// Collect array items from the value stack
+    CollectArray(usize),
+
+    /// Collect operator arguments from the value stack
+    CollectOperatorArgs(OperatorType, usize),
+}
+
+/// A stack of instructions for evaluating JSONLogic expressions
+pub struct InstructionStack<'a> {
+    instructions: Vec<Instruction<'a>>,
+    values: Vec<&'a DataValue<'a>>,
+}
+
+impl<'a> InstructionStack<'a> {
+    /// Creates a new instruction stack with the given token as the root
+    pub fn new(token: &'a Token<'a>) -> Self {
+        let instructions = vec![Instruction::Evaluate(token)];
+
+        Self {
+            instructions,
+            values: Vec::new(),
+        }
+    }
+
+    /// Evaluates the instruction stack
+    pub fn evaluate(
+        &mut self,
+        data: &'a DataValue<'a>,
+        arena: &'a Bump,
+    ) -> Result<&'a DataValue<'a>> {
+        // Continue processing instructions until the stack is empty
+        while let Some(instruction) = self.instructions.pop() {
+            match instruction {
+                Instruction::Evaluate(token) => {
+                    self.process_token(token, data, arena)?;
+                }
+                Instruction::CollectArray(count) => {
+                    self.collect_array(count, arena)?;
+                }
+                Instruction::CollectOperatorArgs(op_type, count) => {
+                    self.collect_operator_args(op_type, count, arena)?;
+                }
+            }
+        }
+
+        // The final result should be the only value on the stack
+        if self.values.len() == 1 {
+            Ok(self.values.pop().unwrap())
+        } else {
+            Err(datavalue_rs::Error::Custom(format!(
+                "Invalid evaluation result: {} values on stack",
+                self.values.len()
+            )))
+        }
+    }
+
+    /// Processes a token and adds appropriate instructions to the stack
+    fn process_token(
+        &mut self,
+        token: &'a Token<'a>,
+        _data: &'a DataValue<'a>,
+        _arena: &'a Bump,
+    ) -> Result<()> {
+        match token {
+            // For literal values, just push them onto the value stack
+            Token::Literal(value) => {
+                self.values.push(value);
+            }
+
+            // For operators, handle based on the type
+            Token::Operator { op_type, args } => {
+                match &**args {
+                    Token::ArrayLiteral(items) => {
+                        let count = items.len();
+
+                        // Push CollectOperatorArgs instruction first (to be executed after all args are evaluated)
+                        self.instructions
+                            .push(Instruction::CollectOperatorArgs(*op_type, count));
+
+                        // Then push each argument evaluation instruction in reverse order
+                        for item in items.iter().rev() {
+                            self.instructions.push(Instruction::Evaluate(item));
+                        }
+                    }
+                    _ => {
+                        return Err(datavalue_rs::Error::Custom(
+                            "Operator requires an array of arguments".to_string(),
+                        ));
+                    }
+                }
+            }
+
+            // For arrays, evaluate each item and collect the results
+            Token::ArrayLiteral(items) => {
+                let count = items.len();
+
+                // Push CollectArray instruction first (to be executed after all items are evaluated)
+                self.instructions.push(Instruction::CollectArray(count));
+
+                // Then push each item evaluation instruction in reverse order
+                for item in items.iter().rev() {
+                    self.instructions.push(Instruction::Evaluate(item));
+                }
+            }
+
+            // Other token types would be handled here
+            _ => {
+                return Err(datavalue_rs::Error::Custom(format!(
+                    "Token type {:?} not yet implemented in stack engine",
+                    token
+                )));
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Collects array items from the value stack
+    fn collect_array(&mut self, count: usize, arena: &'a Bump) -> Result<()> {
+        if self.values.len() < count {
+            return Err(datavalue_rs::Error::Custom(format!(
+                "Not enough values on stack for array: need {}, have {}",
+                count,
+                self.values.len()
+            )));
+        }
+
+        // Get the array items from the stack
+        let start = self.values.len() - count;
+        let array_items: Vec<_> = self.values.drain(start..).collect();
+
+        // Create the array value
+        // Convert to the expected DataValue type
+        let array_values: Vec<DataValue<'a>> = array_items.iter().map(|&v| v.clone()).collect();
+
+        let array = DataValue::Array(arena.alloc_slice_fill_iter(array_values));
+        self.values.push(arena.alloc(array));
+
+        Ok(())
+    }
+
+    /// Collects operator arguments and applies the operator
+    fn collect_operator_args(
+        &mut self,
+        op_type: OperatorType,
+        count: usize,
+        arena: &'a Bump,
+    ) -> Result<()> {
+        if self.values.len() < count {
+            return Err(datavalue_rs::Error::Custom(format!(
+                "Not enough values on stack for operator: need {}, have {}",
+                count,
+                self.values.len()
+            )));
+        }
+
+        // Get the operator arguments from the stack
+        let start = self.values.len() - count;
+        let arg_refs: Vec<_> = self.values.drain(start..).collect();
+
+        // Convert references to DataValue objects
+        let args: Vec<DataValue<'a>> = arg_refs.iter().map(|&v| v.clone()).collect();
+
+        // Apply the operator based on its type
+        match op_type {
+            OperatorType::Add => {
+                let result = arithmetic::evaluate_add(&args, arena)?;
+                self.values.push(result);
+            }
+            OperatorType::Subtract => {
+                let result = arithmetic::evaluate_subtract(&args, arena)?;
+                self.values.push(result);
+            }
+            OperatorType::Multiply => {
+                let result = arithmetic::evaluate_multiply(&args, arena)?;
+                self.values.push(result);
+            }
+            OperatorType::Divide => {
+                let result = arithmetic::evaluate_divide(&args, arena)?;
+                self.values.push(result);
+            }
+            OperatorType::Modulo => {
+                let result = arithmetic::evaluate_modulo(&args, arena)?;
+                self.values.push(result);
+            }
+            OperatorType::Min => {
+                let result = arithmetic::evaluate_min(&args, arena)?;
+                self.values.push(result);
+            }
+            OperatorType::Max => {
+                let result = arithmetic::evaluate_max(&args, arena)?;
+                self.values.push(result);
+            }
+            OperatorType::Abs => {
+                let result = arithmetic::evaluate_abs(&args, arena)?;
+                self.values.push(result);
+            }
+            OperatorType::Ceil => {
+                let result = arithmetic::evaluate_ceil(&args, arena)?;
+                self.values.push(result);
+            }
+            OperatorType::Floor => {
+                let result = arithmetic::evaluate_floor(&args, arena)?;
+                self.values.push(result);
+            }
+            _ => {
+                return Err(datavalue_rs::Error::Custom(format!(
+                    "Operator {:?} not yet implemented in stack engine",
+                    op_type
+                )));
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parser::Token;
+    use datavalue_rs::helpers;
+
+    #[test]
+    fn test_simple_addition() {
+        let arena = Bump::new();
+        let data = arena.alloc(DataValue::Null);
+
+        // Create a simple addition: 1 + 2 + 3
+        let arg1 = Box::new(Token::Literal(helpers::int(1)));
+        let arg2 = Box::new(Token::Literal(helpers::int(2)));
+        let arg3 = Box::new(Token::Literal(helpers::int(3)));
+
+        let args = Box::new(Token::ArrayLiteral(vec![arg1, arg2, arg3]));
+        let add_token = Token::Operator {
+            op_type: OperatorType::Add,
+            args,
+        };
+
+        // Evaluate using our stack-based engine
+        let mut stack = InstructionStack::new(&add_token);
+        let result = stack.evaluate(data, &arena).unwrap();
+
+        // Check the result
+        assert_eq!(result, &helpers::int(6));
+    }
+
+    #[test]
+    fn test_nested_addition() {
+        let arena = Bump::new();
+        let data = arena.alloc(DataValue::Null);
+
+        // Create a nested addition: (1 + 2) + (3 + 4)
+        let inner_args1 = Box::new(Token::ArrayLiteral(vec![
+            Box::new(Token::Literal(helpers::int(1))),
+            Box::new(Token::Literal(helpers::int(2))),
+        ]));
+
+        let inner_args2 = Box::new(Token::ArrayLiteral(vec![
+            Box::new(Token::Literal(helpers::int(3))),
+            Box::new(Token::Literal(helpers::int(4))),
+        ]));
+
+        let inner_add1 = Box::new(Token::Operator {
+            op_type: OperatorType::Add,
+            args: inner_args1,
+        });
+
+        let inner_add2 = Box::new(Token::Operator {
+            op_type: OperatorType::Add,
+            args: inner_args2,
+        });
+
+        let args = Box::new(Token::ArrayLiteral(vec![inner_add1, inner_add2]));
+        let add_token = Token::Operator {
+            op_type: OperatorType::Add,
+            args,
+        };
+
+        // Evaluate using our stack-based engine
+        let mut stack = InstructionStack::new(&add_token);
+        let result = stack.evaluate(data, &arena).unwrap();
+
+        // Check the result
+        assert_eq!(result, &helpers::int(10));
+    }
+
+    #[test]
+    fn test_subtract() {
+        let arena = Bump::new();
+        let data = arena.alloc(DataValue::Null);
+
+        // Create a subtraction: 10 - 3 - 2
+        let arg1 = Box::new(Token::Literal(helpers::int(10)));
+        let arg2 = Box::new(Token::Literal(helpers::int(3)));
+        let arg3 = Box::new(Token::Literal(helpers::int(2)));
+
+        let args = Box::new(Token::ArrayLiteral(vec![arg1, arg2, arg3]));
+        let subtract_token = Token::Operator {
+            op_type: OperatorType::Subtract,
+            args,
+        };
+
+        // Evaluate using our stack-based engine
+        let mut stack = InstructionStack::new(&subtract_token);
+        let result = stack.evaluate(data, &arena).unwrap();
+
+        // Check the result
+        assert_eq!(result, &helpers::int(5)); // 10 - 3 - 2 = 5
+    }
+
+    #[test]
+    fn test_multiply() {
+        let arena = Bump::new();
+        let data = arena.alloc(DataValue::Null);
+
+        // Create a multiplication: 2 * 3 * 4
+        let arg1 = Box::new(Token::Literal(helpers::int(2)));
+        let arg2 = Box::new(Token::Literal(helpers::int(3)));
+        let arg3 = Box::new(Token::Literal(helpers::int(4)));
+
+        let args = Box::new(Token::ArrayLiteral(vec![arg1, arg2, arg3]));
+        let multiply_token = Token::Operator {
+            op_type: OperatorType::Multiply,
+            args,
+        };
+
+        // Evaluate using our stack-based engine
+        let mut stack = InstructionStack::new(&multiply_token);
+        let result = stack.evaluate(data, &arena).unwrap();
+
+        // Check the result
+        assert_eq!(result, &helpers::int(24)); // 2 * 3 * 4 = 24
+    }
+
+    #[test]
+    fn test_divide() {
+        let arena = Bump::new();
+        let data = arena.alloc(DataValue::Null);
+
+        // Create a division: 20 / 4 / 2
+        let arg1 = Box::new(Token::Literal(helpers::int(20)));
+        let arg2 = Box::new(Token::Literal(helpers::int(4)));
+        let arg3 = Box::new(Token::Literal(helpers::int(2)));
+
+        let args = Box::new(Token::ArrayLiteral(vec![arg1, arg2, arg3]));
+        let divide_token = Token::Operator {
+            op_type: OperatorType::Divide,
+            args,
+        };
+
+        // Evaluate using our stack-based engine
+        let mut stack = InstructionStack::new(&divide_token);
+        let result = stack.evaluate(data, &arena).unwrap();
+
+        // Check the result
+        assert_eq!(result, &helpers::float(2.5)); // 20 / 4 / 2 = 2.5
+    }
+
+    #[test]
+    fn test_modulo() {
+        let arena = Bump::new();
+        let data = arena.alloc(DataValue::Null);
+
+        // Create a modulo: 17 % 5
+        let arg1 = Box::new(Token::Literal(helpers::int(17)));
+        let arg2 = Box::new(Token::Literal(helpers::int(5)));
+
+        let args = Box::new(Token::ArrayLiteral(vec![arg1, arg2]));
+        let modulo_token = Token::Operator {
+            op_type: OperatorType::Modulo,
+            args,
+        };
+
+        // Evaluate using our stack-based engine
+        let mut stack = InstructionStack::new(&modulo_token);
+        let result = stack.evaluate(data, &arena).unwrap();
+
+        // Check the result
+        assert_eq!(result, &helpers::int(2)); // 17 % 5 = 2
+    }
+
+    #[test]
+    fn test_min() {
+        let arena = Bump::new();
+        let data = arena.alloc(DataValue::Null);
+
+        // Create a custom min operator: min(5, 2, 8, 1, 9)
+        let min_token = Token::Operator {
+            op_type: OperatorType::Min,
+            args: Box::new(Token::ArrayLiteral(vec![
+                Box::new(Token::Literal(helpers::int(5))),
+                Box::new(Token::Literal(helpers::int(2))),
+                Box::new(Token::Literal(helpers::int(8))),
+                Box::new(Token::Literal(helpers::int(1))),
+                Box::new(Token::Literal(helpers::int(9))),
+            ])),
+        };
+
+        // Evaluate using our stack-based engine
+        let mut stack = InstructionStack::new(&min_token);
+        let result = stack.evaluate(data, &arena).unwrap();
+
+        // Check the result
+        assert_eq!(result, &helpers::int(1)); // min(5, 2, 8, 1, 9) = 1
+    }
+
+    #[test]
+    fn test_max() {
+        let arena = Bump::new();
+        let data = arena.alloc(DataValue::Null);
+
+        // Create a custom max operator: max(5, 2, 8, 1, 9)
+        let max_token = Token::Operator {
+            op_type: OperatorType::Max,
+            args: Box::new(Token::ArrayLiteral(vec![
+                Box::new(Token::Literal(helpers::int(5))),
+                Box::new(Token::Literal(helpers::int(2))),
+                Box::new(Token::Literal(helpers::int(8))),
+                Box::new(Token::Literal(helpers::int(1))),
+                Box::new(Token::Literal(helpers::int(9))),
+            ])),
+        };
+
+        // Evaluate using our stack-based engine
+        let mut stack = InstructionStack::new(&max_token);
+        let result = stack.evaluate(data, &arena).unwrap();
+
+        // Check the result
+        assert_eq!(result, &helpers::int(9)); // max(5, 2, 8, 1, 9) = 9
+    }
+
+    #[test]
+    fn test_abs() {
+        let arena = Bump::new();
+        let data = arena.alloc(DataValue::Null);
+
+        // Create a custom abs operator: abs(-5, 2, 8, 1, 9)
+        let abs_token = Token::Operator {
+            op_type: OperatorType::Abs,
+            args: Box::new(Token::ArrayLiteral(vec![
+                Box::new(Token::Literal(helpers::int(-5))),
+                Box::new(Token::Literal(helpers::int(2))),
+                Box::new(Token::Literal(helpers::int(8))),
+                Box::new(Token::Literal(helpers::int(1))),
+                Box::new(Token::Literal(helpers::int(9))),
+            ])),
+        };
+
+        // Evaluate using our stack-based engine
+        let mut stack = InstructionStack::new(&abs_token);
+        let result = stack.evaluate(data, &arena).unwrap();
+
+        // Check the result
+        assert_eq!(
+            result,
+            &helpers::array(
+                &arena,
+                vec![
+                    helpers::int(5),
+                    helpers::int(2),
+                    helpers::int(8),
+                    helpers::int(1),
+                    helpers::int(9)
+                ]
+            )
+        );
+    }
+
+    #[test]
+    fn test_ceil() {
+        let arena = Bump::new();
+        let data = arena.alloc(DataValue::Null);
+
+        // Create a custom ceil operator: ceil(1.2, 2.7, 3.8, 4.3)
+        let ceil_token = Token::Operator {
+            op_type: OperatorType::Ceil,
+            args: Box::new(Token::ArrayLiteral(vec![
+                Box::new(Token::Literal(helpers::float(1.2))),
+                Box::new(Token::Literal(helpers::float(2.7))),
+                Box::new(Token::Literal(helpers::float(3.8))),
+                Box::new(Token::Literal(helpers::float(4.3))),
+            ])),
+        };
+
+        // Evaluate using our stack-based engine
+        let mut stack = InstructionStack::new(&ceil_token);
+        let result = stack.evaluate(data, &arena).unwrap();
+
+        // Check the result
+        assert_eq!(
+            result,
+            &helpers::array(
+                &arena,
+                vec![
+                    helpers::float(2.0),
+                    helpers::float(3.0),
+                    helpers::float(4.0),
+                    helpers::float(5.0)
+                ]
+            )
+        );
+    }
+
+    #[test]
+    fn test_floor() {
+        let arena = Bump::new();
+        let data = arena.alloc(DataValue::Null);
+
+        // Create a custom floor operator: floor(1.2, 2.7, 3.8, 4.3)
+        let floor_token = Token::Operator {
+            op_type: OperatorType::Floor,
+            args: Box::new(Token::ArrayLiteral(vec![
+                Box::new(Token::Literal(helpers::float(1.2))),
+                Box::new(Token::Literal(helpers::float(2.7))),
+                Box::new(Token::Literal(helpers::float(3.8))),
+                Box::new(Token::Literal(helpers::float(4.3))),
+            ])),
+        };
+
+        // Evaluate using our stack-based engine
+        let mut stack = InstructionStack::new(&floor_token);
+        let result = stack.evaluate(data, &arena).unwrap();
+
+        // Check the result
+        assert_eq!(
+            result,
+            &helpers::array(
+                &arena,
+                vec![
+                    helpers::float(1.0),
+                    helpers::float(2.0),
+                    helpers::float(3.0),
+                    helpers::float(4.0)
+                ]
+            )
+        );
+    }
+}

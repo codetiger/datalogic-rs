@@ -1,18 +1,25 @@
-// Core types and functionality
-pub use datalogic::{CustomOperator, DataLogic};
-pub use error::LogicError;
-pub use logic::{Logic, Result};
-pub use value::{DataValue, FromDataValue, FromJson, IntoDataValue, ToJson};
+//! JSONLogic implementation in Rust.
+//!
+//! This crate provides a fast, memory-efficient implementation of JSONLogic
+//! using DataValue from the datavalue_rs crate.
 
-// Re-export the simple operator types
-pub use arena::{SimpleOperatorAdapter, SimpleOperatorFn};
-
-// Internal modules with implementation details
-mod parser;
-
-// Public modules
-pub mod arena;
-pub mod datalogic;
-pub mod error;
-pub mod logic;
+pub mod engine;
+pub mod operators;
+pub mod optimizer;
+pub mod parser;
 pub mod value;
+
+// Re-export the value extension trait for convenient usage
+pub use value::DataValueExt;
+
+// Re-export DataValue and helpers
+pub use datavalue_rs::{helpers, Bump, DataValue, Number};
+
+// Re-export important parser types
+pub use parser::{parser, OperatorType, ParserError, Token};
+
+// Re-export optimizer functions
+pub use optimizer::optimize;
+
+// Re-export engine evaluation function
+pub use engine::evaluate;

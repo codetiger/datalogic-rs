@@ -1,91 +1,60 @@
-//! Value representation for efficient data processing.
+//! Value extensions for JSONLogic.
 //!
-//! This module provides a memory-efficient value type that leverages arena allocation.
-//! It replaces direct dependency on `serde_json::Value` with a custom implementation
-//! optimized for rule evaluation.
+//! This module extends the DataValue type from the datavalue-rs crate
+//! with functionalities needed for JSONLogic evaluation.
 
-mod access;
+mod compare;
 mod convert;
-mod data_value;
-mod datetime;
-mod number;
-
-pub use access::{parse_path, PathSegment, ValueAccess};
-pub use convert::{
-    data_value_to_json, hash_map_to_data_value, json_to_data_value, FromJson, ToJson,
-};
-pub use data_value::DataValue;
-pub use datetime::{date_diff, format_duration, parse_datetime, parse_duration};
-pub use number::NumberValue;
-
-use crate::arena::DataArena;
-
-/// A trait for types that can be converted to a DataValue.
-pub trait IntoDataValue<'a> {
-    /// Converts the value to a DataValue, allocating in the given arena.
-    fn into_data_value(self, arena: &'a DataArena) -> DataValue<'a>;
-}
-
-/// A trait for types that can be extracted from a DataValue.
-pub trait FromDataValue<T> {
-    /// Extracts a value of type T from a DataValue.
-    fn from_data_value(value: &DataValue) -> Option<T>;
-}
-
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::arena::DataArena;
+mod tests;
+mod truthy;
 
-    #[test]
-    fn test_data_value_creation() {
-        let arena = DataArena::new();
+pub use compare::*;
+pub use convert::*;
+pub use truthy::*;
 
-        // Create different types of values
-        let null = DataValue::null();
-        let boolean = DataValue::bool(true);
-        let number = DataValue::integer(42);
-        let string = DataValue::string(&arena, "hello");
+use datavalue_rs::DataValue;
 
-        // Test basic properties
-        assert!(null.is_null());
-        assert!(boolean.is_bool());
-        assert!(number.is_number());
-        assert!(string.is_string());
+// Re-export the datavalue-rs crate so users can access it directly
+pub use datavalue_rs;
 
-        // Test value extraction
-        assert_eq!(boolean.as_bool(), Some(true));
-        assert_eq!(number.as_i64(), Some(42));
-        assert_eq!(string.as_str(), Some("hello"));
+/// Extension trait for DataValue to support JSONLogic operations
+pub trait DataValueExt<'a> {
+    /// Evaluates whether a value is truthy according to JSONLogic rules
+    fn is_truthy(&self) -> bool;
+
+    /// Compare two DataValues
+    fn compare(&self, other: &DataValue<'a>) -> std::cmp::Ordering;
+
+    /// Equal (loose equality, similar to JavaScript ==)
+    fn loose_equals(&self, other: &DataValue<'a>) -> bool;
+
+    /// Strict equal (strict equality, similar to JavaScript ===)
+    fn strict_equals(&self, other: &DataValue<'a>) -> bool;
+
+    /// Coerce to number according to JSONLogic rules
+    fn coerce_to_number(&self) -> DataValue<'a>;
+}
+
+// Implement the extension trait for DataValue
+impl<'a> DataValueExt<'a> for DataValue<'a> {
+    fn is_truthy(&self) -> bool {
+        truthy::is_truthy(self)
     }
 
-    #[test]
-    fn test_array_and_object() {
-        let arena = DataArena::new();
+    fn compare(&self, other: &DataValue<'a>) -> std::cmp::Ordering {
+        compare::compare_values(self, other)
+    }
 
-        // Create array using the array constructor method
-        let array = DataValue::array(
-            &arena,
-            &[
-                DataValue::integer(1),
-                DataValue::integer(2),
-                DataValue::integer(3),
-            ],
-        );
+    fn loose_equals(&self, other: &DataValue<'a>) -> bool {
+        compare::loose_equals(self, other)
+    }
 
-        assert!(array.is_array());
-        assert_eq!(array.as_array().unwrap().len(), 3);
+    fn strict_equals(&self, other: &DataValue<'a>) -> bool {
+        compare::strict_equals(self, other)
+    }
 
-        // Create object using the object constructor method
-        let object = DataValue::object(
-            &arena,
-            &[
-                (arena.intern_str("a"), DataValue::integer(1)),
-                (arena.intern_str("b"), DataValue::integer(2)),
-            ],
-        );
-
-        assert!(object.is_object());
-        assert_eq!(object.as_object().unwrap().len(), 2);
+    fn coerce_to_number(&self) -> DataValue<'a> {
+        convert::coerce_to_number(self)
     }
 }

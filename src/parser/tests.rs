@@ -1,105 +1,512 @@
-//! Tests for the Parser Registry and parsers
+//! Tests for the parser module
 //!
-//! This module contains tests for the parser registry and the included parsers.
+//! This module contains tests for the JSONLogic parser functionality.
 
 #[cfg(test)]
 mod tests {
-    use crate::arena::DataArena;
-    use crate::logic::{ComparisonOp, OperatorType, Token};
-    use crate::parser::{ExpressionParser, ParserRegistry};
-    use serde_json::Value as JsonValue;
+    use crate::parser::{parser, OperatorType, ParserError, Token};
+    use bumpalo::Bump;
+    use datavalue_rs::{helpers, DataValue, Number};
 
     #[test]
-    fn test_parser_registry_creation() {
-        let registry = ParserRegistry::new();
-
-        // Default parser should be jsonlogic
-        let arena = DataArena::new();
+    fn test_lexer_basic() {
+        // Parse simple JSONLogic expression
+        let arena = Bump::new();
         let json_str = r#"{"==": [{"var": "a"}, 42]}"#;
 
-        // Parse with default parser
-        let token = registry.parse(json_str, None, &arena).unwrap();
+        // Parse with the lexer
+        let token = parser(json_str, &arena).unwrap();
 
-        // Verify the token
-        assert!(token.is_operator());
-        let (op_type, _) = token.as_operator().unwrap();
-        assert_eq!(op_type, OperatorType::Comparison(ComparisonOp::Equal));
+        // Verify the token structure
+        assert!(matches!(*token, Token::Operator { .. }));
+        match token {
+            Token::Operator { op_type, args } => {
+                assert_eq!(*op_type, OperatorType::Equal);
+
+                // Check the args - should be an ArrayLiteral
+                match &**args {
+                    Token::ArrayLiteral(tokens) => {
+                        assert_eq!(tokens.len(), 2);
+
+                        // First element should be a variable token
+                        match &*tokens[0] {
+                            Token::Variable {
+                                path,
+                                default,
+                                scope_jump: _,
+                            } => {
+                                match path {
+                                    DataValue::String(s) => assert_eq!(*s, "a"),
+                                    DataValue::Array(arr) => {
+                                        // Check if this is a path array for dot notation
+                                        if !arr.is_empty() {
+                                            let mut path_parts = Vec::new();
+                                            for part in arr.iter() {
+                                                if let DataValue::String(s) = part {
+                                                    path_parts.push(*s);
+                                                }
+                                            }
+                                            if path_parts.len() == arr.len() {
+                                                assert_eq!(path_parts.join("."), "a");
+                                                return;
+                                            }
+                                        }
+                                        panic!("Unexpected array path format");
+                                    }
+                                    _ => panic!("Expected string or array path"),
+                                }
+                                assert!(default.is_none());
+                            }
+                            _ => panic!("Expected variable token as first argument"),
+                        }
+
+                        // Second element should be a literal number
+                        match &*tokens[1] {
+                            Token::Literal(DataValue::Number(Number::Integer(i))) => {
+                                assert_eq!(*i, 42);
+                            }
+                            _ => panic!("Expected integer literal as second argument"),
+                        }
+                    }
+                    _ => panic!("Expected ArrayLiteral of arguments, instead got {:?}", args),
+                }
+            }
+            _ => panic!("Expected operator token"),
+        }
     }
 
     #[test]
-    fn test_parser_registry_with_specified_parser() {
-        let registry = ParserRegistry::new();
-        let arena = DataArena::new();
-        let json_str = r#"{"==": [{"var": "a"}, 42]}"#;
+    fn test_invalid_json() {
+        let arena = Bump::new();
+        let json_str = r#"{"==": [{"var": "a"}, 42"#; // Missing closing bracket
 
-        // Parse with explicitly specified parser
-        let token = registry.parse(json_str, Some("jsonlogic"), &arena).unwrap();
-
-        // Verify the token
-        assert!(token.is_operator());
-        let (op_type, _) = token.as_operator().unwrap();
-        assert_eq!(op_type, OperatorType::Comparison(ComparisonOp::Equal));
-    }
-
-    #[test]
-    fn test_parser_registry_with_invalid_parser() {
-        let registry = ParserRegistry::new();
-        let arena = DataArena::new();
-        let json_str = r#"{"==": [{"var": "a"}, 42]}"#;
-
-        // Parse with non-existent parser
-        let result = registry.parse(json_str, Some("not_exists"), &arena);
+        // Parse with default parser - should fail
+        let result = parser(json_str, &arena);
         assert!(result.is_err());
-    }
-
-    // This is a mock parser for testing purposes
-    struct MockParser;
-
-    impl ExpressionParser for MockParser {
-        fn parse<'a>(
-            &self,
-            _input: &str,
-            arena: &'a DataArena,
-        ) -> crate::logic::Result<&'a Token<'a>> {
-            // Always returns a literal token with the value "mock"
-            Ok(arena.alloc(Token::literal(crate::value::DataValue::string(
-                arena, "mock",
-            ))))
-        }
-
-        fn parse_json<'a>(
-            &self,
-            _input: &JsonValue,
-            arena: &'a DataArena,
-        ) -> crate::logic::Result<&'a Token<'a>> {
-            Ok(arena.alloc(Token::literal(crate::value::DataValue::string(
-                arena, "mock",
-            ))))
-        }
-
-        fn format_name(&self) -> &'static str {
-            "mock"
+        match result {
+            Err(ParserError::ParserError { reason }) => {
+                assert!(reason.contains("Invalid JSON"));
+            }
+            _ => panic!("Expected ParserError with Invalid JSON message"),
         }
     }
 
     #[test]
-    fn test_multiple_parsers() {
-        let mut registry = ParserRegistry::new();
-        let arena = DataArena::new();
+    fn test_lexer_boolean_literal() {
+        let arena = Bump::new();
+        let json_str = "true";
 
-        // Register the mock parser
-        registry.register(Box::new(MockParser));
+        let token = parser(json_str, &arena).unwrap();
+        match token {
+            Token::Literal(DataValue::Bool(b)) => {
+                assert!(*b);
+            }
+            _ => panic!("Expected boolean literal token"),
+        }
+    }
 
-        // Parse with both parsers
-        let json_str = r#"{"==": [{"var": "a"}, 42]}"#;
+    #[test]
+    fn test_lexer_number_literal() {
+        let arena = Bump::new();
+        let json_str = "42";
 
-        // JSONLogic parser should return an operator
-        let jsonlogic_token = registry.parse(json_str, Some("jsonlogic"), &arena).unwrap();
-        assert!(jsonlogic_token.is_operator());
+        let token = parser(json_str, &arena).unwrap();
+        match token {
+            Token::Literal(DataValue::Number(Number::Integer(i))) => {
+                assert_eq!(*i, 42);
+            }
+            _ => panic!("Expected integer literal token"),
+        }
 
-        // Mock parser should return a literal "mock"
-        let mock_token = registry.parse(json_str, Some("mock"), &arena).unwrap();
-        assert!(mock_token.is_literal());
-        assert_eq!(mock_token.as_literal().unwrap().as_str(), Some("mock"));
+        let json_str = "3.14";
+        let token = parser(json_str, &arena).unwrap();
+        match token {
+            Token::Literal(DataValue::Number(Number::Float(f))) => {
+                assert!(f > &3.13 && f < &3.15);
+            }
+            _ => panic!("Expected float literal token"),
+        }
+    }
+
+    #[test]
+    fn test_lexer_string_literal() {
+        let arena = Bump::new();
+        let json_str = r#""hello world""#;
+
+        let token = parser(json_str, &arena).unwrap();
+        match token {
+            Token::Literal(DataValue::String(s)) => {
+                assert_eq!(*s, "hello world");
+            }
+            _ => panic!("Expected string literal token"),
+        }
+    }
+
+    #[test]
+    fn test_lexer_array_literal() {
+        let arena = Bump::new();
+        let json_str = r#"[1, 2, 3]"#;
+
+        let token = parser(json_str, &arena).unwrap();
+        match token {
+            Token::Literal(DataValue::Array(arr)) => {
+                assert_eq!(arr.len(), 3);
+                assert!(matches!(arr[0], DataValue::Number(Number::Integer(1))));
+                assert!(matches!(arr[1], DataValue::Number(Number::Integer(2))));
+                assert!(matches!(arr[2], DataValue::Number(Number::Integer(3))));
+            }
+            _ => panic!("Expected array literal token"),
+        }
+    }
+
+    #[test]
+    fn test_lexer_object_literal() {
+        let arena = Bump::new();
+        // Use a preserved object to test literal objects
+        let json_str = r#"{"preserve": {"name": "John", "age": 30}}"#;
+
+        let token = parser(json_str, &arena).unwrap();
+        match token {
+            Token::Literal(DataValue::Object(entries)) => {
+                assert_eq!(entries.len(), 2);
+
+                // Find and check the name entry
+                let name_entry = entries.iter().find(|(k, _)| *k == "name");
+                assert!(name_entry.is_some());
+                assert_eq!(name_entry.unwrap().1.as_str().unwrap(), "John");
+
+                // Find and check the age entry
+                let age_entry = entries.iter().find(|(k, _)| *k == "age");
+                assert!(age_entry.is_some());
+                assert_eq!(age_entry.unwrap().1.as_i64().unwrap(), 30);
+            }
+            _ => panic!("Expected object literal token"),
+        }
+    }
+
+    #[test]
+    fn test_lexer_variable() {
+        let arena = Bump::new();
+        let json_str = r#"{"var": "user.name"}"#;
+
+        let token = parser(json_str, &arena).unwrap();
+        match token {
+            Token::Variable {
+                path,
+                default,
+                scope_jump: _,
+            } => {
+                match path {
+                    DataValue::String(s) => assert_eq!(*s, "user.name"),
+                    DataValue::Array(arr) => {
+                        // For dotted path, it's stored as an array of strings
+                        if !arr.is_empty() {
+                            let mut path_parts = Vec::new();
+                            for part in arr.iter() {
+                                if let DataValue::String(s) = part {
+                                    path_parts.push(*s);
+                                }
+                            }
+                            if path_parts.len() == arr.len() {
+                                assert_eq!(path_parts.join("."), "user.name");
+                            } else {
+                                panic!("Unexpected array path format");
+                            }
+                        }
+                    }
+                    _ => panic!("Expected string or array path"),
+                }
+                assert!(default.is_none());
+            }
+            _ => panic!("Expected variable token"),
+        }
+
+        // Variable with default value
+        let json_str = r#"{"var": ["user.name", "Unknown"]}"#;
+        let token = parser(json_str, &arena).unwrap();
+        match token {
+            Token::Variable {
+                path,
+                default,
+                scope_jump: _,
+            } => {
+                match path {
+                    DataValue::String(s) => assert_eq!(*s, "user.name"),
+                    DataValue::Array(arr) => {
+                        // For dotted path, it's stored as an array of strings
+                        if !arr.is_empty() {
+                            let mut path_parts = Vec::new();
+                            for part in arr.iter() {
+                                if let DataValue::String(s) = part {
+                                    path_parts.push(*s);
+                                }
+                            }
+                            if path_parts.len() == arr.len() {
+                                assert_eq!(path_parts.join("."), "user.name");
+                            } else {
+                                panic!("Unexpected array path format");
+                            }
+                        }
+                    }
+                    _ => panic!("Expected string or array path"),
+                }
+                assert!(default.is_some());
+                let default_value = default.as_ref().unwrap();
+                match **default_value {
+                    DataValue::String(s) => assert_eq!(s, "Unknown"),
+                    _ => panic!("Expected string literal as default value"),
+                }
+            }
+            _ => panic!("Expected variable token with default"),
+        }
+    }
+
+    #[test]
+    fn test_lexer_operator() {
+        let arena = Bump::new();
+
+        // Simple operator
+        let json_str = r#"{"not": true}"#;
+        let token = parser(json_str, &arena).unwrap();
+        match token {
+            Token::Operator { op_type, args } => {
+                assert_eq!(*op_type, OperatorType::Not);
+                match &**args {
+                    Token::Literal(DataValue::Bool(b)) => {
+                        assert!(*b);
+                    }
+                    _ => panic!("Expected boolean argument"),
+                }
+            }
+            _ => panic!("Expected operator token"),
+        }
+
+        // Operator with array argument
+        let json_str = r#"{"and": [true, false, true]}"#;
+        let token = parser(json_str, &arena).unwrap();
+        match token {
+            Token::Operator { op_type, args } => {
+                assert_eq!(*op_type, OperatorType::And);
+                match &**args {
+                    Token::Literal(DataValue::Array(arr)) => {
+                        assert_eq!(arr.len(), 3);
+                        assert!(matches!(arr[0], DataValue::Bool(true)));
+                        assert!(matches!(arr[1], DataValue::Bool(false)));
+                        assert!(matches!(arr[2], DataValue::Bool(true)));
+                    }
+                    _ => panic!("Expected array of arguments"),
+                }
+            }
+            _ => panic!("Expected operator token"),
+        }
+    }
+
+    #[test]
+    fn test_lexer_custom_operator() {
+        let arena = Bump::new();
+        let json_str = r#"{"custom_op": [1, 2, 3]}"#;
+
+        let token = parser(json_str, &arena).unwrap();
+        match token {
+            Token::CustomOperator { name, args } => {
+                assert_eq!(*name, "custom_op");
+                match &**args {
+                    Token::Literal(DataValue::Array(arr)) => {
+                        assert_eq!(arr.len(), 3);
+                        assert!(matches!(arr[0], DataValue::Number(Number::Integer(1))));
+                        assert!(matches!(arr[1], DataValue::Number(Number::Integer(2))));
+                        assert!(matches!(arr[2], DataValue::Number(Number::Integer(3))));
+                    }
+                    _ => panic!("Expected array of arguments"),
+                }
+            }
+            _ => panic!("Expected custom operator token"),
+        }
+    }
+
+    #[test]
+    fn test_lexer_complex() {
+        let arena = Bump::new();
+
+        // A more complex JSONLogic expression
+        let json_str = r#"
+        {
+          "if": [
+            {"<": [{"var": "temp"}, 0]},
+            "freezing",
+            {"<": [{"var": "temp"}, 25]},
+            "cool",
+            "hot"
+          ]
+        }
+        "#;
+
+        let token = parser(json_str, &arena).unwrap();
+        match token {
+            Token::Operator { op_type, .. } => {
+                assert_eq!(*op_type, OperatorType::If);
+            }
+            _ => panic!("Expected if operator token"),
+        }
+    }
+
+    #[test]
+    fn test_lexer_nested() {
+        let arena = Bump::new();
+
+        // Nested operators
+        let json_str = r#"
+        {
+          "and": [
+            {"==": [{"var": "a"}, 1]},
+            {"==": [{"var": "b"}, 2]}
+          ]
+        }
+        "#;
+
+        let token = parser(json_str, &arena).unwrap();
+        match token {
+            Token::Operator { op_type, .. } => {
+                assert_eq!(*op_type, OperatorType::And);
+            }
+            _ => panic!("Expected and operator token"),
+        }
+    }
+
+    #[test]
+    fn test_token_methods() {
+        let arena = Bump::new();
+
+        // Test is_operator
+        let op_token = Box::new(Token::operator(
+            OperatorType::Add,
+            Box::new(Token::literal(helpers::null())),
+        ));
+        assert!(op_token.is_operator());
+
+        // Test is_literal
+        let lit_token = Box::new(Token::literal(helpers::boolean(true)));
+        assert!(lit_token.is_literal());
+
+        // Test is_variable
+        let var_token = Box::new(Token::variable(
+            arena.alloc(DataValue::String("path")),
+            None,
+            None,
+        ));
+        assert!(var_token.is_variable());
+
+        // Test is_custom_operator
+        let custom_token = Box::new(Token::custom_operator(
+            arena.alloc_str("custom"),
+            Box::new(Token::literal(helpers::null())),
+        ));
+        assert!(custom_token.is_custom_operator());
+    }
+
+    #[test]
+    fn test_is_static_token() {
+        let arena = Bump::new();
+
+        // Test literal - should be static
+        let literal = Token::Literal(helpers::int(42));
+        assert!(literal.is_static_token());
+
+        // Test array of literals - should be static
+        let array = Token::ArrayLiteral(vec![
+            Box::new(Token::Literal(helpers::int(1))),
+            Box::new(Token::Literal(helpers::int(2))),
+        ]);
+        assert!(array.is_static_token());
+
+        // Test variable - should not be static
+        let variable = Token::Variable {
+            path: arena.alloc(DataValue::String("foo")),
+            default: None,
+            scope_jump: None,
+        };
+        assert!(!variable.is_static_token());
+
+        // Test dynamic variable - should not be static
+        let dynamic_var = Token::DynamicVariable {
+            path_expr: Box::new(Token::Literal(helpers::string(&arena, "path"))),
+            default: None,
+            scope_jump: None,
+        };
+        assert!(!dynamic_var.is_static_token());
+
+        // Test operator with static arguments - should be static
+        let add_op = Token::Operator {
+            op_type: OperatorType::Add,
+            args: Box::new(Token::ArrayLiteral(vec![
+                Box::new(Token::Literal(helpers::int(1))),
+                Box::new(Token::Literal(helpers::int(2))),
+            ])),
+        };
+        assert!(add_op.is_static_token());
+
+        // Test var operator - should not be static
+        let var_op = Token::Operator {
+            op_type: OperatorType::Var,
+            args: Box::new(Token::Literal(helpers::string(&arena, "foo"))),
+        };
+        assert!(!var_op.is_static_token());
+
+        // Test operator with mixed arguments - should not be static
+        let mixed_op = Token::Operator {
+            op_type: OperatorType::Add,
+            args: Box::new(Token::ArrayLiteral(vec![
+                Box::new(Token::Literal(helpers::int(1))),
+                Box::new(Token::Variable {
+                    path: arena.alloc(DataValue::String("bar")),
+                    default: None,
+                    scope_jump: None,
+                }),
+            ])),
+        };
+        assert!(!mixed_op.is_static_token());
+
+        // Test nested operators - should maintain static status correctly
+        let nested_static = Token::Operator {
+            op_type: OperatorType::And,
+            args: Box::new(Token::ArrayLiteral(vec![
+                Box::new(Token::Operator {
+                    op_type: OperatorType::Add,
+                    args: Box::new(Token::ArrayLiteral(vec![
+                        Box::new(Token::Literal(helpers::int(1))),
+                        Box::new(Token::Literal(helpers::int(2))),
+                    ])),
+                }),
+                Box::new(Token::Literal(helpers::boolean(true))),
+            ])),
+        };
+        assert!(nested_static.is_static_token());
+
+        // Test nested operators with variable - should not be static
+        let nested_non_static = Token::Operator {
+            op_type: OperatorType::And,
+            args: Box::new(Token::ArrayLiteral(vec![
+                Box::new(Token::Operator {
+                    op_type: OperatorType::Add,
+                    args: Box::new(Token::ArrayLiteral(vec![
+                        Box::new(Token::Literal(helpers::int(1))),
+                        Box::new(Token::Literal(helpers::int(2))),
+                    ])),
+                }),
+                Box::new(Token::Variable {
+                    path: arena.alloc(DataValue::String("flag")),
+                    default: None,
+                    scope_jump: None,
+                }),
+            ])),
+        };
+        assert!(!nested_non_static.is_static_token());
+
+        // Test custom operator - should not be static
+        let custom_op = Token::CustomOperator {
+            name: arena.alloc_str("my_op"),
+            args: Box::new(Token::Literal(helpers::int(42))),
+        };
+        assert!(!custom_op.is_static_token());
     }
 }

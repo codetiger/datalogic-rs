@@ -1,440 +1,139 @@
-//! Conversion utilities for DataValue.
+//! Value conversion functions for JSONLogic
 //!
-//! This module provides utilities for converting between DataValue and other formats,
-//! such as JSON.
+//! This module provides functions for coercing DataValue values according to
+//! JSONLogic type conversion rules.
 
-use super::data_value::DataValue;
-use super::number::NumberValue;
-use crate::arena::DataArena;
-use serde_json::{Map as JsonMap, Number as JsonNumber, Value as JsonValue};
-use std::collections::HashMap;
+use datavalue_rs::{helpers, DataValue, Number};
 
-/// A trait for converting from JSON to DataValue.
-pub trait FromJson<'a> {
-    /// Converts a JSON value to a DataValue, allocating in the given arena.
-    fn from_json(json: &JsonValue, arena: &'a DataArena) -> DataValue<'a>;
-}
+/// Coerces a value to a number according to JSONLogic rules
+///
+/// # Rules
+/// - Numbers remain as numbers
+/// - Empty strings become 0
+/// - Strings with numeric content are converted to numbers
+/// - Non-numeric strings become 0
+/// - Booleans: true → 1, false → 0
+/// - Arrays:
+///   - Empty arrays become 0
+///   - Single-element arrays are coerced as their single element
+///   - Multi-element arrays become 0
+/// - Objects become 0
+/// - Null becomes 0
+///
+/// # Arguments
+///
+/// * `value` - The value to coerce
+///
+/// # Returns
+///
+/// A DataValue containing the coerced number
+pub fn coerce_to_number<'a>(value: &DataValue<'a>) -> DataValue<'a> {
+    match value {
+        // Numbers are already numbers, just clone them
+        DataValue::Number(num) => match num {
+            Number::Integer(i) => helpers::int(*i),
+            Number::Float(f) => helpers::float(*f),
+        },
 
-/// A trait for converting from DataValue to JSON.
-pub trait ToJson {
-    /// Converts a DataValue to a JSON value.
-    fn to_json(&self) -> JsonValue;
-}
-
-impl<'a> FromJson<'a> for DataValue<'a> {
-    fn from_json(json: &JsonValue, arena: &'a DataArena) -> DataValue<'a> {
-        match json {
-            JsonValue::Null => DataValue::null(),
-            JsonValue::Bool(b) => DataValue::bool(*b),
-            JsonValue::Number(n) => {
-                if let Some(i) = n.as_i64() {
-                    DataValue::integer(i)
-                } else if let Some(f) = n.as_f64() {
-                    DataValue::float(f)
-                } else {
-                    // This should never happen with valid JSON
-                    DataValue::null()
-                }
-            }
-            JsonValue::String(s) => {
-                // Try to parse as datetime
-                if let Ok(dt) = super::parse_datetime(s) {
-                    return DataValue::datetime(dt);
-                }
-
-                // Try to parse as duration
-                if let Ok(duration) = super::parse_duration(s) {
-                    return DataValue::duration(duration);
-                }
-
-                // Default to string
-                DataValue::string(arena, s)
-            }
-            JsonValue::Array(arr) => {
-                // Pre-allocate space for the array elements
-                let mut values = Vec::with_capacity(arr.len());
-
-                // Convert each element in the array
-                for item in arr.iter() {
-                    values.push(DataValue::from_json(item, arena));
-                }
-
-                // Create the array DataValue
-                DataValue::array(arena, &values)
-            }
-            JsonValue::Object(obj) => {
-                // Pre-allocate space for the object entries
-                let mut entries = Vec::with_capacity(obj.len());
-
-                // Convert each key-value pair in the object
-                for (key, value) in obj.iter() {
-                    let interned_key = arena.intern_str(key);
-                    entries.push((interned_key, DataValue::from_json(value, arena)));
-                }
-
-                // Create the object DataValue
-                DataValue::object(arena, &entries)
+        // Booleans: true → 1, false → 0
+        DataValue::Bool(b) => {
+            if *b {
+                helpers::int(1)
+            } else {
+                helpers::int(0)
             }
         }
-    }
-}
 
-impl ToJson for DataValue<'_> {
-    fn to_json(&self) -> JsonValue {
-        match self {
-            DataValue::Null => JsonValue::Null,
-            DataValue::Bool(b) => JsonValue::Bool(*b),
-            DataValue::Number(n) => {
-                match n {
-                    NumberValue::Integer(i) => {
-                        // Create a JSON number directly from the integer to preserve its type
-                        JsonValue::Number((*i).into())
-                    }
-                    NumberValue::Float(f) => {
-                        if let Some(num) = JsonNumber::from_f64(*f) {
-                            JsonValue::Number(num)
-                        } else {
-                            // Handle NaN, Infinity, etc.
-                            JsonValue::Null
-                        }
-                    }
-                }
+        // Strings: parse numeric content, empty or non-numeric become 0
+        DataValue::String(s) => {
+            if s.is_empty() {
+                return helpers::int(0);
             }
-            DataValue::String(s) => JsonValue::String(s.to_string()),
-            DataValue::Array(arr) => {
-                let json_arr: Vec<JsonValue> = arr.iter().map(|item| item.to_json()).collect();
-                JsonValue::Array(json_arr)
-            }
-            DataValue::Object(entries) => {
-                let mut map = JsonMap::new();
-                for (key, value) in entries.iter() {
-                    map.insert((*key).to_string(), value.to_json());
-                }
-                JsonValue::Object(map)
-            }
-            DataValue::DateTime(dt) => {
-                // Format the datetime as an ISO8601 string
-                JsonValue::String(dt.to_rfc3339())
-            }
-            DataValue::Duration(d) => {
-                // Format the duration as a simplified string representation
-                let total_seconds = d.num_seconds();
-                let days = total_seconds / 86400;
-                let hours = (total_seconds % 86400) / 3600;
-                let minutes = (total_seconds % 3600) / 60;
-                let seconds = total_seconds % 60;
 
-                if days > 0 {
-                    JsonValue::String(format!("{}d:{}h:{}m:{}s", days, hours, minutes, seconds))
-                } else if hours > 0 {
-                    JsonValue::String(format!("{}h:{}m:{}s", hours, minutes, seconds))
-                } else if minutes > 0 {
-                    JsonValue::String(format!("{}m:{}s", minutes, seconds))
-                } else {
-                    JsonValue::String(format!("{}s", seconds))
-                }
+            // Try to parse as number
+            if let Ok(i) = s.parse::<i64>() {
+                helpers::int(i)
+            } else if let Ok(f) = s.parse::<f64>() {
+                helpers::float(f)
+            } else {
+                helpers::int(0)
             }
         }
+
+        // Arrays: empty → 0, single element → coerce that element, multiple elements → 0
+        DataValue::Array(arr) => {
+            if arr.is_empty() {
+                helpers::int(0)
+            } else if arr.len() == 1 {
+                coerce_to_number(&arr[0])
+            } else {
+                helpers::int(0)
+            }
+        }
+
+        // Null, objects, and other types become 0
+        DataValue::Null
+        | DataValue::Object(_)
+        | DataValue::DateTime(_)
+        | DataValue::Duration(_) => helpers::int(0),
     }
-}
-
-/// Converts a JSON value to a DataValue.
-pub fn json_to_data_value<'a>(json: &JsonValue, arena: &'a DataArena) -> DataValue<'a> {
-    DataValue::from_json(json, arena)
-}
-
-/// Converts a DataValue to a JSON value.
-pub fn data_value_to_json(value: &DataValue<'_>) -> JsonValue {
-    value.to_json()
-}
-
-/// Converts a HashMap to a DataValue object.
-pub fn hash_map_to_data_value<'a, V>(
-    map: &HashMap<String, V>,
-    arena: &'a DataArena,
-    value_converter: impl Fn(&V, &'a DataArena) -> DataValue<'a>,
-) -> DataValue<'a> {
-    let entries: Vec<(&'a str, DataValue<'a>)> = map
-        .iter()
-        .map(|(key, value)| {
-            let interned_key = arena.intern_str(key);
-            let data_value = value_converter(value, arena);
-            (interned_key, data_value)
-        })
-        .collect();
-
-    // Create the object DataValue
-    DataValue::object(arena, &entries)
 }
 
 #[cfg(test)]
 mod tests {
+    use bumpalo::Bump;
+
     use super::*;
-    use serde_json::json;
 
     #[test]
-    fn test_json_conversion() {
-        let arena = DataArena::new();
-
-        // Create a complex JSON value
-        let json = json!({
-            "null": null,
-            "bool": true,
-            "integer": 42,
-            "float": 3.14,
-            "string": "hello",
-            "array": [1, 2, 3],
-            "object": {
-                "a": 1,
-                "b": "two"
-            }
-        });
-
-        // Convert JSON to DataValue
-        let data_value = DataValue::from_json(&json, &arena);
-
-        // Convert back to JSON
-        let json2 = data_value.to_json();
-
-        // Verify the round-trip conversion
-        assert_eq!(json, json2);
-    }
-
-    #[test]
-    fn test_hash_map_conversion() {
-        let arena = DataArena::new();
-
-        // Create a HashMap
-        let mut map = HashMap::new();
-        map.insert("a".to_string(), 1);
-        map.insert("b".to_string(), 2);
-        map.insert("c".to_string(), 3);
-
-        // Convert HashMap to DataValue
-        let data_value = hash_map_to_data_value(&map, &arena, |v, _| DataValue::integer(*v));
-
-        // Verify the conversion
-        if let DataValue::Object(entries) = data_value {
-            assert_eq!(entries.len(), 3);
-
-            // Check each entry
-            let mut found_a = false;
-            let mut found_b = false;
-            let mut found_c = false;
-
-            for (key, value) in entries.iter() {
-                let v = value.as_i64().unwrap();
-
-                match *key {
-                    "a" => {
-                        assert_eq!(v, 1);
-                        found_a = true;
-                    }
-                    "b" => {
-                        assert_eq!(v, 2);
-                        found_b = true;
-                    }
-                    "c" => {
-                        assert_eq!(v, 3);
-                        found_c = true;
-                    }
-                    _ => panic!("Unexpected key: {}", key),
-                }
-            }
-
-            assert!(
-                found_a && found_b && found_c,
-                "Not all expected keys were found"
-            );
-        } else {
-            panic!("Expected DataValue::Object");
-        }
-    }
-
-    #[test]
-    fn test_json_to_data_value() {
-        let arena = DataArena::new();
-
-        // Create a JSON value
-        let json = json!({
-            "name": "John",
-            "age": 30,
-            "is_active": true
-        });
-
-        // Convert JSON to DataValue using the helper function
-        let data_value = json_to_data_value(&json, &arena);
-
-        // Verify the conversion
-        assert!(data_value.is_object());
-        let obj = data_value.as_object().unwrap();
-
-        // Find and verify each field
-        let mut found_name = false;
-        let mut found_age = false;
-        let mut found_is_active = false;
-
-        for (key, value) in obj.iter() {
-            match *key {
-                "name" => {
-                    assert_eq!(value.as_str(), Some("John"));
-                    found_name = true;
-                }
-                "age" => {
-                    assert_eq!(value.as_i64(), Some(30));
-                    found_age = true;
-                }
-                "is_active" => {
-                    assert_eq!(value.as_bool(), Some(true));
-                    found_is_active = true;
-                }
-                _ => panic!("Unexpected key: {}", key),
-            }
-        }
-
-        assert!(
-            found_name && found_age && found_is_active,
-            "Not all expected keys were found"
-        );
-    }
-
-    #[test]
-    fn test_data_value_to_json() {
-        let arena = DataArena::new();
-
-        // Create a DataValue
-        let data_value = DataValue::object(
-            &arena,
-            &[
-                (arena.intern_str("name"), DataValue::string(&arena, "Alice")),
-                (
-                    arena.intern_str("scores"),
-                    DataValue::array(
-                        &arena,
-                        &[
-                            DataValue::integer(95),
-                            DataValue::integer(87),
-                            DataValue::integer(92),
-                        ],
-                    ),
-                ),
-            ],
+    fn test_coerce_to_number() {
+        // Numbers should remain unchanged
+        assert_eq!(coerce_to_number(&helpers::int(42)), helpers::int(42));
+        assert_eq!(
+            coerce_to_number(&helpers::float(3.14)),
+            helpers::float(3.14)
         );
 
-        // Convert DataValue to JSON using the helper function
-        let json = data_value_to_json(&data_value);
+        // Booleans
+        assert_eq!(coerce_to_number(&helpers::boolean(true)), helpers::int(1));
+        assert_eq!(coerce_to_number(&helpers::boolean(false)), helpers::int(0));
 
-        // Verify the conversion
-        if let JsonValue::Object(map) = json {
-            assert_eq!(map.len(), 2);
+        // Strings
+        let arena = Bump::new();
+        let str_val = helpers::string(&arena, "42");
+        assert_eq!(coerce_to_number(&str_val), helpers::int(42));
 
-            // Check name field
-            if let Some(JsonValue::String(name)) = map.get("name") {
-                assert_eq!(name, "Alice");
-            } else {
-                panic!("Expected 'name' to be a string");
-            }
+        let str_val = helpers::string(&arena, "3.14");
+        assert_eq!(coerce_to_number(&str_val), helpers::float(3.14));
 
-            // Check scores field
-            if let Some(JsonValue::Array(scores)) = map.get("scores") {
-                assert_eq!(scores.len(), 3);
-                assert_eq!(scores[0], JsonValue::Number(95.into()));
-                assert_eq!(scores[1], JsonValue::Number(87.into()));
-                assert_eq!(scores[2], JsonValue::Number(92.into()));
-            } else {
-                panic!("Expected 'scores' to be an array");
-            }
-        } else {
-            panic!("Expected a JSON object");
-        }
-    }
+        let str_val = helpers::string(&arena, "");
+        assert_eq!(coerce_to_number(&str_val), helpers::int(0));
 
-    #[test]
-    fn test_hash_map_to_data_value_with_complex_values() {
-        let arena = DataArena::new();
+        let str_val = helpers::string(&arena, "abc");
+        assert_eq!(coerce_to_number(&str_val), helpers::int(0));
 
-        // Create a HashMap with complex values (nested structures)
-        let mut map = HashMap::new();
-        map.insert("user1".to_string(), ("Alice", 25));
-        map.insert("user2".to_string(), ("Bob", 30));
+        // Arrays
+        let empty_array = DataValue::Array(&[]);
+        assert_eq!(coerce_to_number(&empty_array), helpers::int(0));
 
-        // Convert HashMap to DataValue with a custom converter
-        let data_value = hash_map_to_data_value(&map, &arena, |&(name, age), arena| {
-            DataValue::object(
-                arena,
-                &[
-                    (arena.intern_str("name"), DataValue::string(arena, name)),
-                    (arena.intern_str("age"), DataValue::integer(age)),
-                ],
-            )
-        });
+        // Create a long-lived array for testing
+        let single_value = helpers::int(42);
+        let single_array_values = [single_value];
+        let single_array = DataValue::Array(&single_array_values);
+        assert_eq!(coerce_to_number(&single_array), helpers::int(42));
 
-        // Verify the conversion
-        if let DataValue::Object(entries) = data_value {
-            assert_eq!(entries.len(), 2);
+        // Create a long-lived array for testing
+        let val1 = helpers::int(1);
+        let val2 = helpers::int(2);
+        let multi_array_values = [val1, val2];
+        let multi_array = DataValue::Array(&multi_array_values);
+        assert_eq!(coerce_to_number(&multi_array), helpers::int(0));
 
-            // Check each user
-            for (key, value) in entries.iter() {
-                match *key {
-                    "user1" => {
-                        if let DataValue::Object(user_entries) = value {
-                            let mut found_name = false;
-                            let mut found_age = false;
+        // Null
+        assert_eq!(coerce_to_number(&DataValue::Null), helpers::int(0));
 
-                            for (user_key, user_value) in user_entries.iter() {
-                                match *user_key {
-                                    "name" => {
-                                        assert_eq!(user_value.as_str(), Some("Alice"));
-                                        found_name = true;
-                                    }
-                                    "age" => {
-                                        assert_eq!(user_value.as_i64(), Some(25));
-                                        found_age = true;
-                                    }
-                                    _ => panic!("Unexpected user key: {}", user_key),
-                                }
-                            }
-
-                            assert!(
-                                found_name && found_age,
-                                "Not all expected user fields were found"
-                            );
-                        } else {
-                            panic!("Expected user1 to be an object");
-                        }
-                    }
-                    "user2" => {
-                        if let DataValue::Object(user_entries) = value {
-                            let mut found_name = false;
-                            let mut found_age = false;
-
-                            for (user_key, user_value) in user_entries.iter() {
-                                match *user_key {
-                                    "name" => {
-                                        assert_eq!(user_value.as_str(), Some("Bob"));
-                                        found_name = true;
-                                    }
-                                    "age" => {
-                                        assert_eq!(user_value.as_i64(), Some(30));
-                                        found_age = true;
-                                    }
-                                    _ => panic!("Unexpected user key: {}", user_key),
-                                }
-                            }
-
-                            assert!(
-                                found_name && found_age,
-                                "Not all expected user fields were found"
-                            );
-                        } else {
-                            panic!("Expected user2 to be an object");
-                        }
-                    }
-                    _ => panic!("Unexpected key: {}", key),
-                }
-            }
-        } else {
-            panic!("Expected DataValue::Object");
-        }
+        // Object
+        let object = DataValue::Object(&[]);
+        assert_eq!(coerce_to_number(&object), helpers::int(0));
     }
 }
