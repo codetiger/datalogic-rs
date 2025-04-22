@@ -9,4 +9,5 @@ pub mod comparison;
 pub mod context;
 pub mod control;
 pub mod datetime;
+pub mod logic;
 pub mod string;

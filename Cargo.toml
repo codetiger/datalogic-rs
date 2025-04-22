@@ -16,4 +16,5 @@ categories = ["data-structures", "development-tools", "parsing"]
 datavalue-rs = "0.1"
 bumpalo = { version = "3.17", features = ["collections", "boxed", "serde"] }
 thiserror = "2.0"
+serde_json = { version = "1.0.140", features = ["preserve_order"] }
 

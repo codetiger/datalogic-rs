@@ -60,6 +60,8 @@ pub enum OperatorType {
     And,
     Or,
     Not,
+    NullCoalesce, // ?? (null coalescing)
+
     // Special operators
     Var,         // Variable access
     Missing,     // Check if variables are missing
@@ -78,6 +80,51 @@ pub enum OperatorType {
     Cat,         // Concatenate strings
     Log,         // Log a value (for debugging)
     Custom,      // Custom operator
+}
+
+/// Determines how an operator's arguments should be evaluated
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EvaluationStrategy {
+    /// Evaluate all arguments before calling operator function (eager evaluation)
+    Eager,
+
+    /// Pass raw arguments to operator function to control evaluation (lazy evaluation)
+    Lazy,
+
+    /// Evaluate arguments and use them in a predicate function
+    Predicate,
+}
+
+impl OperatorType {
+    /// Returns the evaluation strategy for this operator
+    pub fn evaluation_strategy(&self) -> EvaluationStrategy {
+        match self {
+            // Control flow operators with lazy evaluation
+            OperatorType::If
+            | OperatorType::And
+            | OperatorType::Or
+            | OperatorType::Not
+            | OperatorType::NullCoalesce => EvaluationStrategy::Lazy,
+
+            // Variables and data access operations
+            OperatorType::Var
+            | OperatorType::Missing
+            | OperatorType::MissingAll
+            | OperatorType::MissingSome
+            | OperatorType::Exists => EvaluationStrategy::Lazy,
+
+            // Array operations that might need special evaluation
+            OperatorType::Map
+            | OperatorType::Filter
+            | OperatorType::Reduce
+            | OperatorType::All
+            | OperatorType::Some
+            | OperatorType::None => EvaluationStrategy::Lazy,
+
+            // Default for arithmetic and most other operators - eager evaluation
+            _ => EvaluationStrategy::Eager,
+        }
+    }
 }
 
 impl FromStr for OperatorType {
@@ -112,6 +159,8 @@ impl FromStr for OperatorType {
             "and" => Ok(OperatorType::And),
             "or" => Ok(OperatorType::Or),
             "not" => Ok(OperatorType::Not),
+            "??" => Ok(OperatorType::NullCoalesce),
+
             // Special operators
             "var" => Ok(OperatorType::Var),
             "missing" => Ok(OperatorType::Missing),
@@ -156,6 +205,8 @@ impl fmt::Display for OperatorType {
             OperatorType::And => "and",
             OperatorType::Or => "or",
             OperatorType::Not => "not",
+            OperatorType::NullCoalesce => "??",
+
             // Comparison operators
             OperatorType::Equal => "==",
             OperatorType::StrictEqual => "===",
@@ -165,7 +216,7 @@ impl fmt::Display for OperatorType {
             OperatorType::GTE => ">=",
             OperatorType::LT => "<",
             OperatorType::LTE => "<=",
-            // Math operators
+
             // Special operators
             OperatorType::Var => "var",
             OperatorType::Missing => "missing",

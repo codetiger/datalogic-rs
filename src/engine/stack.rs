@@ -4,8 +4,10 @@
 //! non-recursive evaluation of JSONLogic expressions.
 
 use crate::operators::arithmetic;
-use crate::parser::{OperatorType, Token};
+use crate::operators::logic;
+use crate::parser::{EvaluationStrategy, OperatorType, Token};
 use bumpalo::Bump;
+use datavalue_rs::Number;
 use datavalue_rs::{DataValue, Result};
 
 /// Represents an instruction on the evaluation stack
@@ -19,12 +21,16 @@ enum Instruction<'a> {
 
     /// Collect operator arguments from the value stack
     CollectOperatorArgs(OperatorType, usize),
+
+    /// Evaluate a lazy operator with its raw arguments token
+    EvaluateLazyOperator(OperatorType, &'a Token<'a>),
 }
 
 /// A stack of instructions for evaluating JSONLogic expressions
 pub struct InstructionStack<'a> {
     instructions: Vec<Instruction<'a>>,
     values: Vec<&'a DataValue<'a>>,
+    data: Option<&'a DataValue<'a>>,
 }
 
 impl<'a> InstructionStack<'a> {
@@ -35,6 +41,7 @@ impl<'a> InstructionStack<'a> {
         Self {
             instructions,
             values: Vec::new(),
+            data: None,
         }
     }
 
@@ -44,6 +51,9 @@ impl<'a> InstructionStack<'a> {
         data: &'a DataValue<'a>,
         arena: &'a Bump,
     ) -> Result<&'a DataValue<'a>> {
+        // Store data context for lazy operators
+        self.data = Some(data);
+
         // Continue processing instructions until the stack is empty
         while let Some(instruction) = self.instructions.pop() {
             match instruction {
@@ -55,6 +65,9 @@ impl<'a> InstructionStack<'a> {
                 }
                 Instruction::CollectOperatorArgs(op_type, count) => {
                     self.collect_operator_args(op_type, count, arena)?;
+                }
+                Instruction::EvaluateLazyOperator(op_type, args) => {
+                    self.evaluate_lazy_operator(op_type, args, data, arena)?;
                 }
             }
         }
@@ -74,8 +87,8 @@ impl<'a> InstructionStack<'a> {
     fn process_token(
         &mut self,
         token: &'a Token<'a>,
-        _data: &'a DataValue<'a>,
-        _arena: &'a Bump,
+        data: &'a DataValue<'a>,
+        arena: &'a Bump,
     ) -> Result<()> {
         match token {
             // For literal values, just push them onto the value stack
@@ -83,25 +96,74 @@ impl<'a> InstructionStack<'a> {
                 self.values.push(value);
             }
 
-            // For operators, handle based on the type
+            // For operators, handle based on the type and evaluation strategy
             Token::Operator { op_type, args } => {
-                match &**args {
-                    Token::ArrayLiteral(items) => {
-                        let count = items.len();
+                // Check the evaluation strategy for this operator
+                match op_type.evaluation_strategy() {
+                    crate::parser::EvaluationStrategy::Eager => {
+                        // Handle eager evaluation (same as before)
+                        match &**args {
+                            Token::ArrayLiteral(items) => {
+                                let count = items.len();
 
-                        // Push CollectOperatorArgs instruction first (to be executed after all args are evaluated)
-                        self.instructions
-                            .push(Instruction::CollectOperatorArgs(*op_type, count));
+                                // Push CollectOperatorArgs instruction first (to be executed after all args are evaluated)
+                                self.instructions
+                                    .push(Instruction::CollectOperatorArgs(*op_type, count));
 
-                        // Then push each argument evaluation instruction in reverse order
-                        for item in items.iter().rev() {
-                            self.instructions.push(Instruction::Evaluate(item));
+                                // Then push each argument evaluation instruction in reverse order
+                                for item in items.iter().rev() {
+                                    self.instructions.push(Instruction::Evaluate(item));
+                                }
+                            }
+                            Token::Literal(item) => {
+                                // Push CollectOperatorArgs instruction first (to be executed after all args are evaluated)
+                                self.instructions
+                                    .push(Instruction::CollectOperatorArgs(*op_type, 1));
+
+                                // Then push argument evaluation instruction in reverse order
+                                let token = arena.alloc(Token::Literal(item.clone()));
+                                self.instructions.push(Instruction::Evaluate(token));
+                            }
+                            Token::Operator { op_type, args } => {
+                                // Push CollectOperatorArgs instruction first (to be executed after all args are evaluated)
+                                self.instructions
+                                    .push(Instruction::CollectOperatorArgs(*op_type, 1));
+
+                                // Then push argument evaluation instruction in reverse order
+                                self.instructions.push(Instruction::Evaluate(args));
+                            }
+                            _ => {
+                                return Err(datavalue_rs::Error::Custom(
+                                    "Operator requires an array of arguments".to_string(),
+                                ));
+                            }
                         }
                     }
-                    _ => {
-                        return Err(datavalue_rs::Error::Custom(
-                            "Operator requires an array of arguments".to_string(),
-                        ));
+                    EvaluationStrategy::Lazy => {
+                        // For lazy operators, push a special instruction that will handle the evaluation
+                        self.instructions
+                            .push(Instruction::EvaluateLazyOperator(*op_type, args));
+                    }
+                    EvaluationStrategy::Predicate => {
+                        // For predicate operators, we could implement special handling if needed
+                        // For now, treat them the same as eager operators
+                        match &**args {
+                            Token::ArrayLiteral(items) => {
+                                let count = items.len();
+
+                                self.instructions
+                                    .push(Instruction::CollectOperatorArgs(*op_type, count));
+
+                                for item in items.iter().rev() {
+                                    self.instructions.push(Instruction::Evaluate(item));
+                                }
+                            }
+                            _ => {
+                                return Err(datavalue_rs::Error::Custom(
+                                    "Operator requires an array of arguments".to_string(),
+                                ));
+                            }
+                        }
                     }
                 }
             }
@@ -120,13 +182,92 @@ impl<'a> InstructionStack<'a> {
             }
 
             // Other token types would be handled here
-            _ => {
-                return Err(datavalue_rs::Error::Custom(format!(
-                    "Token type {:?} not yet implemented in stack engine",
-                    token
-                )));
+            Token::Variable {
+                path,
+                default: _,
+                scope_jump,
+            } => {
+                println!("Variable: {:?}", path);
+                if scope_jump.is_none() {
+                    match path {
+                        DataValue::Array([]) => {
+                            self.values.push(data);
+                        }
+                        DataValue::Array(items) => {
+                            let mut context = Some(data);
+                            for item in items.iter() {
+                                match item {
+                                    DataValue::String(key) => context = context.unwrap().get(key),
+                                    DataValue::Number(Number::Integer(i)) => {
+                                        context = context.unwrap().get_index(*i as usize)
+                                    }
+                                    _ => unreachable!(),
+                                }
+                                println!("Item: {:?}, Context: {:?}", item, context);
+                            }
+                            if let Some(context) = context {
+                                self.values.push(context);
+                            } else {
+                                self.values.push(arena.alloc(DataValue::Null));
+                            }
+                        }
+                        DataValue::String(key) => self.values.push(data.get(key).unwrap()),
+                        DataValue::Number(Number::Integer(i)) => {
+                            self.values.push(data.get_index(*i as usize).unwrap())
+                        }
+                        _ => {
+                            return Err(datavalue_rs::Error::Custom(format!(
+                                "Invalid path: {:?}",
+                                path
+                            )))
+                        }
+                    }
+                }
+            }
+
+            Token::DynamicVariable { .. } => {
+                return Err(datavalue_rs::Error::Custom(
+                    "Dynamic variables not yet implemented".to_string(),
+                ));
+            }
+
+            Token::CustomOperator { .. } => {
+                return Err(datavalue_rs::Error::Custom(
+                    "Custom operators not yet implemented".to_string(),
+                ));
             }
         }
+
+        Ok(())
+    }
+
+    /// Evaluates a lazy operator with its raw arguments
+    fn evaluate_lazy_operator(
+        &mut self,
+        op_type: OperatorType,
+        args: &'a Token<'a>,
+        data: &'a DataValue<'a>,
+        arena: &'a Bump,
+    ) -> Result<()> {
+        // Call the appropriate lazy operator function
+        let result = match op_type {
+            OperatorType::If => logic::evaluate_if(args, data, arena)?,
+            OperatorType::And => logic::evaluate_and(args, data, arena)?,
+            OperatorType::Or => logic::evaluate_or(args, data, arena)?,
+            OperatorType::Not => logic::evaluate_not(args, data, arena)?,
+            OperatorType::NullCoalesce => logic::evaluate_null_coalesce(args, data, arena)?,
+
+            // For other lazy operators that might be implemented later
+            _ => {
+                return Err(datavalue_rs::Error::Custom(format!(
+                    "Lazy operator {:?} not yet implemented",
+                    op_type
+                )));
+            }
+        };
+
+        // Push the result onto the value stack
+        self.values.push(result);
 
         Ok(())
     }

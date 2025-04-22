@@ -9,19 +9,6 @@ use datavalue_rs::{helpers, DataValue, Number};
 
 use crate::parser::{OperatorType, ParserError, Result, Token};
 
-/// Checks if a DataValue is a literal.
-fn is_value_literal(value: &DataValue) -> bool {
-    match value {
-        DataValue::Null | DataValue::Bool(_) | DataValue::Number(_) | DataValue::String(_) => true,
-        DataValue::Array(arr) => {
-            // Nested arrays are allowed if they only contain literals
-            arr.iter().all(is_value_literal)
-        }
-        DataValue::Object(_) => false,
-        DataValue::DateTime(_) | DataValue::Duration(_) => true,
-    }
-}
-
 /// Internal function for parsing a DataValue into a token.
 pub fn parse_datavalue_internal<'a>(value: &DataValue<'a>, arena: &'a Bump) -> Result<Token<'a>> {
     match value {
@@ -36,28 +23,12 @@ pub fn parse_datavalue_internal<'a>(value: &DataValue<'a>, arena: &'a Bump) -> R
 
         // Arrays could be literal arrays or token arrays
         DataValue::Array(arr) => {
-            // Check if all elements are literals
-            let mut all_literals = true;
+            let mut tokens = Vec::with_capacity(arr.len());
             for item in arr.iter() {
-                if !is_value_literal(item) {
-                    all_literals = false;
-                    break;
-                }
+                let token = parse_datavalue_internal(item, arena)?;
+                tokens.push(Box::new(token));
             }
-
-            // If all elements are literals, create a literal array
-            if all_literals {
-                let values: Vec<DataValue> = arr.to_vec();
-                Ok(Token::literal(helpers::array(arena, values)))
-            } else {
-                // Otherwise, create an array of tokens and allocate them in the arena
-                let mut tokens = Vec::with_capacity(arr.len());
-                for item in arr.iter() {
-                    let token = parse_datavalue_internal(item, arena)?;
-                    tokens.push(Box::new(token));
-                }
-                Ok(Token::ArrayLiteral(tokens))
-            }
+            Ok(Token::ArrayLiteral(tokens))
         }
 
         // Objects could be operators or literal objects
@@ -73,10 +44,7 @@ fn parse_object<'a>(entries: &'a [(&'a str, DataValue<'a>)], arena: &'a Bump) ->
 
         match *key {
             "var" => parse_variable(value, arena),
-            "val" => {
-                let token = parse_datavalue_internal(value, arena)?;
-                Ok(Token::operator(OperatorType::Val, Box::new(token)))
-            }
+            "val" => parse_val(value, arena),
             "preserve" => {
                 // The preserve operator returns its argument as-is without parsing it as an operator
                 Ok(Token::literal(value.clone()))
@@ -104,6 +72,71 @@ fn parse_object<'a>(entries: &'a [(&'a str, DataValue<'a>)], arena: &'a Bump) ->
         Err(ParserError::OperatorNotFoundError {
             operator: key.to_string(),
         })
+    }
+}
+
+fn parse_val<'a>(value: &DataValue<'a>, arena: &'a Bump) -> Result<Token<'a>> {
+    match value {
+        DataValue::String(s) => Ok(Token::variable(
+            arena.alloc(DataValue::String(s)),
+            None,
+            None,
+        )),
+        DataValue::Number(Number::Integer(i)) => Ok(Token::variable(
+            arena.alloc(DataValue::Number(Number::Integer(*i))),
+            None,
+            None,
+        )),
+        DataValue::Array(arr) => {
+            if arr.len() > 1 {
+                if let DataValue::Array([DataValue::Number(Number::Integer(i))]) = arr[0] {
+                    let jump = *i as usize;
+
+                    let mut tokens = Vec::with_capacity(arr.len() - 1);
+                    for item in arr.iter().skip(1) {
+                        let token = parse_datavalue_internal(item, arena)?;
+                        tokens.push(Box::new(token));
+                    }
+                    return Ok(Token::DynamicVariable {
+                        path_expr: Box::new(Token::ArrayLiteral(tokens)),
+                        default: None,
+                        scope_jump: Some(jump),
+                    });
+                }
+            }
+
+            let is_dynamic = arr.iter().any(|item| matches!(item, DataValue::Object(_)));
+
+            if is_dynamic {
+                let mut tokens = Vec::with_capacity(arr.len());
+                for item in arr.iter() {
+                    let token = parse_datavalue_internal(item, arena)?;
+                    tokens.push(Box::new(token));
+                }
+                Ok(Token::dynamic_variable(
+                    Box::new(Token::ArrayLiteral(tokens)),
+                    None,
+                    None,
+                ))
+            } else {
+                Ok(Token::variable(
+                    arena.alloc(DataValue::Array(arr)),
+                    None,
+                    None,
+                ))
+            }
+        }
+        DataValue::Object(entries) => {
+            let operator = parse_object(entries, arena)?;
+            Ok(Token::DynamicVariable {
+                path_expr: Box::new(operator),
+                default: None,
+                scope_jump: None,
+            })
+        }
+        _ => Err(ParserError::ParserError {
+            reason: format!("Invalid val syntax: {:?}", value),
+        }),
     }
 }
 
