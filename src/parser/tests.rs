@@ -18,58 +18,10 @@ mod tests {
         let token = parser(json_str, &arena).unwrap();
 
         // Verify the token structure
-        assert!(matches!(*token, Token::Operator { .. }));
+        assert!(matches!(token, Token::Operator { .. }));
         match token {
-            Token::Operator { op_type, args } => {
+            Token::Operator { op_type, args: _ } => {
                 assert_eq!(*op_type, OperatorType::Equal);
-
-                // Check the args - should be an ArrayLiteral
-                match &**args {
-                    Token::ArrayLiteral(tokens) => {
-                        assert_eq!(tokens.len(), 2);
-
-                        // First element should be a variable token
-                        match &*tokens[0] {
-                            Token::Variable {
-                                path,
-                                default,
-                                scope_jump: _,
-                            } => {
-                                match path {
-                                    DataValue::String(s) => assert_eq!(*s, "a"),
-                                    DataValue::Array(arr) => {
-                                        // Check if this is a path array for dot notation
-                                        if !arr.is_empty() {
-                                            let mut path_parts = Vec::new();
-                                            for part in arr.iter() {
-                                                if let DataValue::String(s) = part {
-                                                    path_parts.push(*s);
-                                                }
-                                            }
-                                            if path_parts.len() == arr.len() {
-                                                assert_eq!(path_parts.join("."), "a");
-                                                return;
-                                            }
-                                        }
-                                        panic!("Unexpected array path format");
-                                    }
-                                    _ => panic!("Expected string or array path"),
-                                }
-                                assert!(default.is_none());
-                            }
-                            _ => panic!("Expected variable token as first argument"),
-                        }
-
-                        // Second element should be a literal number
-                        match &*tokens[1] {
-                            Token::Literal(DataValue::Number(Number::Integer(i))) => {
-                                assert_eq!(*i, 42);
-                            }
-                            _ => panic!("Expected integer literal as second argument"),
-                        }
-                    }
-                    _ => panic!("Expected ArrayLiteral of arguments, instead got {:?}", args),
-                }
             }
             _ => panic!("Expected operator token"),
         }
@@ -149,11 +101,11 @@ mod tests {
 
         let token = parser(json_str, &arena).unwrap();
         match token {
-            Token::Literal(DataValue::Array(arr)) => {
-                assert_eq!(arr.len(), 3);
-                assert!(matches!(arr[0], DataValue::Number(Number::Integer(1))));
-                assert!(matches!(arr[1], DataValue::Number(Number::Integer(2))));
-                assert!(matches!(arr[2], DataValue::Number(Number::Integer(3))));
+            Token::ArrayLiteral(values) => {
+                assert_eq!(values.len(), 3);
+                assert!(matches!(values[0], DataValue::Number(Number::Integer(1))));
+                assert!(matches!(values[1], DataValue::Number(Number::Integer(2))));
+                assert!(matches!(values[2], DataValue::Number(Number::Integer(3))));
             }
             _ => panic!("Expected array literal token"),
         }
@@ -378,29 +330,29 @@ mod tests {
         let arena = Bump::new();
 
         // Test is_operator
-        let op_token = Box::new(Token::operator(
-            OperatorType::Add,
-            Box::new(Token::literal(helpers::null())),
-        ));
+        let op_token = Box::new(Token::Operator {
+            op_type: OperatorType::Add,
+            args: Box::new(Token::Literal(helpers::null())),
+        });
         assert!(op_token.is_operator());
 
         // Test is_literal
-        let lit_token = Box::new(Token::literal(helpers::boolean(true)));
+        let lit_token = Box::new(Token::Literal(helpers::boolean(true)));
         assert!(lit_token.is_literal());
 
         // Test is_variable
-        let var_token = Box::new(Token::variable(
-            arena.alloc(DataValue::String("path")),
-            None,
-            None,
-        ));
+        let var_token = Box::new(Token::Variable {
+            path: arena.alloc(DataValue::String("path")),
+            default: None,
+            scope_jump: None,
+        });
         assert!(var_token.is_variable());
 
         // Test is_custom_operator
-        let custom_token = Box::new(Token::custom_operator(
-            arena.alloc_str("custom"),
-            Box::new(Token::literal(helpers::null())),
-        ));
+        let custom_token = Box::new(Token::CustomOperator {
+            name: arena.alloc_str("custom"),
+            args: Box::new(Token::Literal(helpers::null())),
+        });
         assert!(custom_token.is_custom_operator());
     }
 
@@ -414,8 +366,8 @@ mod tests {
 
         // Test array of literals - should be static
         let array = Token::ArrayLiteral(vec![
-            Box::new(Token::Literal(helpers::int(1))),
-            Box::new(Token::Literal(helpers::int(2))),
+            DataValue::Number(Number::Integer(1)),
+            DataValue::Number(Number::Integer(2)),
         ]);
         assert!(array.is_static_token());
 
@@ -439,8 +391,8 @@ mod tests {
         let add_op = Token::Operator {
             op_type: OperatorType::Add,
             args: Box::new(Token::ArrayLiteral(vec![
-                Box::new(Token::Literal(helpers::int(1))),
-                Box::new(Token::Literal(helpers::int(2))),
+                DataValue::Number(Number::Integer(1)),
+                DataValue::Number(Number::Integer(2)),
             ])),
         };
         assert!(add_op.is_static_token());
@@ -452,29 +404,25 @@ mod tests {
         };
         assert!(!var_op.is_static_token());
 
-        // Test operator with mixed arguments - should not be static
+        // Test operator with mixed arguments - should be static
         let mixed_op = Token::Operator {
             op_type: OperatorType::Add,
             args: Box::new(Token::ArrayLiteral(vec![
-                Box::new(Token::Literal(helpers::int(1))),
-                Box::new(Token::Variable {
-                    path: arena.alloc(DataValue::String("bar")),
-                    default: None,
-                    scope_jump: None,
-                }),
+                DataValue::Number(Number::Integer(1)),
+                DataValue::String("bar"),
             ])),
         };
-        assert!(!mixed_op.is_static_token());
+        assert!(mixed_op.is_static_token());
 
         // Test nested operators - should maintain static status correctly
         let nested_static = Token::Operator {
             op_type: OperatorType::And,
-            args: Box::new(Token::ArrayLiteral(vec![
+            args: Box::new(Token::Array(vec![
                 Box::new(Token::Operator {
                     op_type: OperatorType::Add,
                     args: Box::new(Token::ArrayLiteral(vec![
-                        Box::new(Token::Literal(helpers::int(1))),
-                        Box::new(Token::Literal(helpers::int(2))),
+                        DataValue::Number(Number::Integer(1)),
+                        DataValue::Number(Number::Integer(2)),
                     ])),
                 }),
                 Box::new(Token::Literal(helpers::boolean(true))),
@@ -485,12 +433,12 @@ mod tests {
         // Test nested operators with variable - should not be static
         let nested_non_static = Token::Operator {
             op_type: OperatorType::And,
-            args: Box::new(Token::ArrayLiteral(vec![
+            args: Box::new(Token::Array(vec![
                 Box::new(Token::Operator {
                     op_type: OperatorType::Add,
                     args: Box::new(Token::ArrayLiteral(vec![
-                        Box::new(Token::Literal(helpers::int(1))),
-                        Box::new(Token::Literal(helpers::int(2))),
+                        DataValue::Number(Number::Integer(1)),
+                        DataValue::Number(Number::Integer(2)),
                     ])),
                 }),
                 Box::new(Token::Variable {

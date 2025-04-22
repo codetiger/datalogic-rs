@@ -103,7 +103,7 @@ impl<'a> InstructionStack<'a> {
                     crate::parser::EvaluationStrategy::Eager => {
                         // Handle eager evaluation (same as before)
                         match &**args {
-                            Token::ArrayLiteral(items) => {
+                            Token::Array(items) => {
                                 let count = items.len();
 
                                 // Push CollectOperatorArgs instruction first (to be executed after all args are evaluated)
@@ -114,6 +114,12 @@ impl<'a> InstructionStack<'a> {
                                 for item in items.iter().rev() {
                                     self.instructions.push(Instruction::Evaluate(item));
                                 }
+                            }
+                            Token::ArrayLiteral(items) => {
+                                let count = items.len();
+
+                                self.instructions
+                                    .push(Instruction::CollectOperatorArgs(*op_type, count));
                             }
                             Token::Literal(item) => {
                                 // Push CollectOperatorArgs instruction first (to be executed after all args are evaluated)
@@ -148,7 +154,7 @@ impl<'a> InstructionStack<'a> {
                         // For predicate operators, we could implement special handling if needed
                         // For now, treat them the same as eager operators
                         match &**args {
-                            Token::ArrayLiteral(items) => {
+                            Token::Array(items) => {
                                 let count = items.len();
 
                                 self.instructions
@@ -169,7 +175,7 @@ impl<'a> InstructionStack<'a> {
             }
 
             // For arrays, evaluate each item and collect the results
-            Token::ArrayLiteral(items) => {
+            Token::Array(items) => {
                 let count = items.len();
 
                 // Push CollectArray instruction first (to be executed after all items are evaluated)
@@ -179,6 +185,12 @@ impl<'a> InstructionStack<'a> {
                 for item in items.iter().rev() {
                     self.instructions.push(Instruction::Evaluate(item));
                 }
+            }
+
+            Token::ArrayLiteral(items) => {
+                let count = items.len();
+
+                self.instructions.push(Instruction::CollectArray(count));
             }
 
             // Other token types would be handled here
@@ -197,9 +209,15 @@ impl<'a> InstructionStack<'a> {
                             let mut context = Some(data);
                             for item in items.iter() {
                                 match item {
-                                    DataValue::String(key) => context = context.unwrap().get(key),
+                                    DataValue::String(key) => {
+                                        let value = context.unwrap().get(key);
+                                        context =
+                                            Some(value.unwrap_or(arena.alloc(DataValue::Null)));
+                                    }
                                     DataValue::Number(Number::Integer(i)) => {
-                                        context = context.unwrap().get_index(*i as usize)
+                                        let value = context.unwrap().get_index(*i as usize);
+                                        context =
+                                            Some(value.unwrap_or(arena.alloc(DataValue::Null)));
                                     }
                                     _ => unreachable!(),
                                 }
@@ -211,9 +229,15 @@ impl<'a> InstructionStack<'a> {
                                 self.values.push(arena.alloc(DataValue::Null));
                             }
                         }
-                        DataValue::String(key) => self.values.push(data.get(key).unwrap()),
+                        DataValue::String(key) => {
+                            let value = data.get(key);
+                            self.values
+                                .push(value.unwrap_or(arena.alloc(DataValue::Null)));
+                        }
                         DataValue::Number(Number::Integer(i)) => {
-                            self.values.push(data.get_index(*i as usize).unwrap())
+                            let value = data.get_index(*i as usize);
+                            self.values
+                                .push(value.unwrap_or(arena.alloc(DataValue::Null)));
                         }
                         _ => {
                             return Err(datavalue_rs::Error::Custom(format!(
@@ -388,7 +412,7 @@ mod tests {
         let arg2 = Box::new(Token::Literal(helpers::int(2)));
         let arg3 = Box::new(Token::Literal(helpers::int(3)));
 
-        let args = Box::new(Token::ArrayLiteral(vec![arg1, arg2, arg3]));
+        let args = Box::new(Token::Array(vec![arg1, arg2, arg3]));
         let add_token = Token::Operator {
             op_type: OperatorType::Add,
             args,
@@ -408,12 +432,12 @@ mod tests {
         let data = arena.alloc(DataValue::Null);
 
         // Create a nested addition: (1 + 2) + (3 + 4)
-        let inner_args1 = Box::new(Token::ArrayLiteral(vec![
+        let inner_args1 = Box::new(Token::Array(vec![
             Box::new(Token::Literal(helpers::int(1))),
             Box::new(Token::Literal(helpers::int(2))),
         ]));
 
-        let inner_args2 = Box::new(Token::ArrayLiteral(vec![
+        let inner_args2 = Box::new(Token::Array(vec![
             Box::new(Token::Literal(helpers::int(3))),
             Box::new(Token::Literal(helpers::int(4))),
         ]));
@@ -428,7 +452,7 @@ mod tests {
             args: inner_args2,
         });
 
-        let args = Box::new(Token::ArrayLiteral(vec![inner_add1, inner_add2]));
+        let args = Box::new(Token::Array(vec![inner_add1, inner_add2]));
         let add_token = Token::Operator {
             op_type: OperatorType::Add,
             args,
@@ -452,7 +476,7 @@ mod tests {
         let arg2 = Box::new(Token::Literal(helpers::int(3)));
         let arg3 = Box::new(Token::Literal(helpers::int(2)));
 
-        let args = Box::new(Token::ArrayLiteral(vec![arg1, arg2, arg3]));
+        let args = Box::new(Token::Array(vec![arg1, arg2, arg3]));
         let subtract_token = Token::Operator {
             op_type: OperatorType::Subtract,
             args,
@@ -476,7 +500,7 @@ mod tests {
         let arg2 = Box::new(Token::Literal(helpers::int(3)));
         let arg3 = Box::new(Token::Literal(helpers::int(4)));
 
-        let args = Box::new(Token::ArrayLiteral(vec![arg1, arg2, arg3]));
+        let args = Box::new(Token::Array(vec![arg1, arg2, arg3]));
         let multiply_token = Token::Operator {
             op_type: OperatorType::Multiply,
             args,
@@ -500,7 +524,7 @@ mod tests {
         let arg2 = Box::new(Token::Literal(helpers::int(4)));
         let arg3 = Box::new(Token::Literal(helpers::int(2)));
 
-        let args = Box::new(Token::ArrayLiteral(vec![arg1, arg2, arg3]));
+        let args = Box::new(Token::Array(vec![arg1, arg2, arg3]));
         let divide_token = Token::Operator {
             op_type: OperatorType::Divide,
             args,
@@ -523,7 +547,7 @@ mod tests {
         let arg1 = Box::new(Token::Literal(helpers::int(17)));
         let arg2 = Box::new(Token::Literal(helpers::int(5)));
 
-        let args = Box::new(Token::ArrayLiteral(vec![arg1, arg2]));
+        let args = Box::new(Token::Array(vec![arg1, arg2]));
         let modulo_token = Token::Operator {
             op_type: OperatorType::Modulo,
             args,
@@ -545,7 +569,7 @@ mod tests {
         // Create a custom min operator: min(5, 2, 8, 1, 9)
         let min_token = Token::Operator {
             op_type: OperatorType::Min,
-            args: Box::new(Token::ArrayLiteral(vec![
+            args: Box::new(Token::Array(vec![
                 Box::new(Token::Literal(helpers::int(5))),
                 Box::new(Token::Literal(helpers::int(2))),
                 Box::new(Token::Literal(helpers::int(8))),
@@ -570,7 +594,7 @@ mod tests {
         // Create a custom max operator: max(5, 2, 8, 1, 9)
         let max_token = Token::Operator {
             op_type: OperatorType::Max,
-            args: Box::new(Token::ArrayLiteral(vec![
+            args: Box::new(Token::Array(vec![
                 Box::new(Token::Literal(helpers::int(5))),
                 Box::new(Token::Literal(helpers::int(2))),
                 Box::new(Token::Literal(helpers::int(8))),
@@ -595,7 +619,7 @@ mod tests {
         // Create a custom abs operator: abs(-5, 2, 8, 1, 9)
         let abs_token = Token::Operator {
             op_type: OperatorType::Abs,
-            args: Box::new(Token::ArrayLiteral(vec![
+            args: Box::new(Token::Array(vec![
                 Box::new(Token::Literal(helpers::int(-5))),
                 Box::new(Token::Literal(helpers::int(2))),
                 Box::new(Token::Literal(helpers::int(8))),
@@ -632,7 +656,7 @@ mod tests {
         // Create a custom ceil operator: ceil(1.2, 2.7, 3.8, 4.3)
         let ceil_token = Token::Operator {
             op_type: OperatorType::Ceil,
-            args: Box::new(Token::ArrayLiteral(vec![
+            args: Box::new(Token::Array(vec![
                 Box::new(Token::Literal(helpers::float(1.2))),
                 Box::new(Token::Literal(helpers::float(2.7))),
                 Box::new(Token::Literal(helpers::float(3.8))),
@@ -667,7 +691,7 @@ mod tests {
         // Create a custom floor operator: floor(1.2, 2.7, 3.8, 4.3)
         let floor_token = Token::Operator {
             op_type: OperatorType::Floor,
-            args: Box::new(Token::ArrayLiteral(vec![
+            args: Box::new(Token::Array(vec![
                 Box::new(Token::Literal(helpers::float(1.2))),
                 Box::new(Token::Literal(helpers::float(2.7))),
                 Box::new(Token::Literal(helpers::float(3.8))),

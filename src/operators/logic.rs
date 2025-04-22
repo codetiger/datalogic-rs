@@ -25,7 +25,7 @@ pub fn evaluate_if<'a>(
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
     match args {
-        Token::ArrayLiteral(tokens) => {
+        Token::Array(tokens) => {
             // If requires at least one argument (the condition)
             if tokens.is_empty() {
                 return Ok(arena.alloc(helpers::null()));
@@ -77,7 +77,7 @@ pub fn evaluate_and<'a>(
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
     match args {
-        Token::ArrayLiteral(tokens) => {
+        Token::Array(tokens) => {
             // Empty array returns true (identity element for AND)
             if tokens.is_empty() {
                 return Ok(arena.alloc(helpers::boolean(true)));
@@ -123,7 +123,7 @@ pub fn evaluate_or<'a>(
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
     match args {
-        Token::ArrayLiteral(tokens) => {
+        Token::Array(tokens) => {
             // Empty array returns false (identity element for OR)
             if tokens.is_empty() {
                 return Ok(arena.alloc(helpers::boolean(false)));
@@ -174,7 +174,7 @@ pub fn evaluate_not<'a>(
         Token::Literal(value) => value,
 
         // If args is an array (e.g., {"not": [expression]}), evaluate the first item
-        Token::ArrayLiteral(tokens) => {
+        Token::Array(tokens) => {
             if tokens.is_empty() {
                 // Empty array case - not([]) = not(false) = true
                 return Ok(arena.alloc(helpers::boolean(true)));
@@ -213,7 +213,7 @@ pub fn evaluate_null_coalesce<'a>(
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
     match args {
-        Token::ArrayLiteral(tokens) => {
+        Token::Array(tokens) => {
             // Empty array case
             if tokens.is_empty() {
                 return Ok(arena.alloc(helpers::null()));

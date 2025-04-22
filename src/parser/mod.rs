@@ -247,7 +247,10 @@ pub enum Token<'a> {
     Literal(DataValue<'a>),
 
     /// An array of tokens
-    ArrayLiteral(Vec<Box<Token<'a>>>),
+    Array(Vec<Box<Token<'a>>>),
+
+    /// An array of literal values
+    ArrayLiteral(Vec<DataValue<'a>>),
 
     /// A variable reference with an optional default value
     Variable {
@@ -274,42 +277,6 @@ pub enum Token<'a> {
 }
 
 impl<'a> Token<'a> {
-    /// Create a new literal token
-    pub fn literal(value: DataValue<'a>) -> Self {
-        Token::Literal(value)
-    }
-
-    /// Create a new variable token
-    pub fn variable(
-        path: &'a DataValue<'a>,
-        default: Option<&'a DataValue<'a>>,
-        scope_jump: Option<usize>,
-    ) -> Self {
-        Token::Variable {
-            path,
-            default,
-            scope_jump,
-        }
-    }
-
-    /// Create a new dynamic variable token
-    pub fn dynamic_variable(
-        path_expr: Box<Token<'a>>,
-        default: Option<Box<Token<'a>>>,
-        scope_jump: Option<usize>,
-    ) -> Self {
-        Token::DynamicVariable {
-            path_expr,
-            default,
-            scope_jump,
-        }
-    }
-
-    /// Create a new operator token
-    pub fn operator(op_type: OperatorType, args: Box<Token<'a>>) -> Self {
-        Token::Operator { op_type, args }
-    }
-
     /// Create a new custom operator token
     pub fn custom_operator(name: &'a str, args: Box<Token<'a>>) -> Self {
         Token::CustomOperator { name, args }
@@ -342,7 +309,10 @@ impl<'a> Token<'a> {
             Token::Literal(_) => true,
 
             // Array literals are static if all their elements are static
-            Token::ArrayLiteral(items) => items.iter().all(|item| item.is_static_token()),
+            Token::ArrayLiteral(_) => true,
+
+            // Arrays are never static as they can contain dynamic variables
+            Token::Array(items) => items.iter().all(|item| item.is_static_token()),
 
             // Variables are never static as they access the context
             Token::Variable { .. } => false,

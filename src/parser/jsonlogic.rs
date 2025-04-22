@@ -13,26 +13,38 @@ use crate::parser::{OperatorType, ParserError, Result, Token};
 pub fn parse_datavalue_internal<'a>(value: &DataValue<'a>, arena: &'a Bump) -> Result<Token<'a>> {
     match value {
         // Simple literals
-        DataValue::Null => Ok(Token::literal(helpers::null())),
-        DataValue::Bool(b) => Ok(Token::literal(helpers::boolean(*b))),
-        DataValue::Number(Number::Integer(i)) => Ok(Token::literal(helpers::int(*i))),
-        DataValue::Number(Number::Float(f)) => Ok(Token::literal(helpers::float(*f))),
-        DataValue::String(s) => Ok(Token::literal(helpers::string(arena, s))),
-        DataValue::DateTime(dt) => Ok(Token::literal(DataValue::DateTime(*dt))),
-        DataValue::Duration(d) => Ok(Token::literal(DataValue::Duration(*d))),
+        DataValue::Null => Ok(Token::Literal(helpers::null())),
+        DataValue::Bool(b) => Ok(Token::Literal(helpers::boolean(*b))),
+        DataValue::Number(Number::Integer(i)) => Ok(Token::Literal(helpers::int(*i))),
+        DataValue::Number(Number::Float(f)) => Ok(Token::Literal(helpers::float(*f))),
+        DataValue::String(s) => Ok(Token::Literal(helpers::string(arena, s))),
+        DataValue::DateTime(dt) => Ok(Token::Literal(DataValue::DateTime(*dt))),
+        DataValue::Duration(d) => Ok(Token::Literal(DataValue::Duration(*d))),
 
         // Arrays could be literal arrays or token arrays
-        DataValue::Array(arr) => {
-            let mut tokens = Vec::with_capacity(arr.len());
-            for item in arr.iter() {
-                let token = parse_datavalue_internal(item, arena)?;
-                tokens.push(Box::new(token));
-            }
-            Ok(Token::ArrayLiteral(tokens))
-        }
+        DataValue::Array(arr) => parse_array(arr, arena),
 
         // Objects could be operators or literal objects
         DataValue::Object(entries) => parse_object(entries, arena),
+    }
+}
+
+fn parse_array<'a>(arr: &[DataValue<'a>], arena: &'a Bump) -> Result<Token<'a>> {
+    let mut values = Vec::with_capacity(arr.len());
+    let mut tokens = Vec::with_capacity(arr.len());
+    for item in arr.iter() {
+        let token = parse_datavalue_internal(item, arena)?;
+        if matches!(token, Token::Literal(_)) {
+            values.push(item.clone());
+        } else {
+            tokens.push(Box::new(token));
+        }
+    }
+
+    if values.len() == arr.len() {
+        Ok(Token::ArrayLiteral(values))
+    } else {
+        Ok(Token::Array(tokens))
     }
 }
 
@@ -47,7 +59,7 @@ fn parse_object<'a>(entries: &'a [(&'a str, DataValue<'a>)], arena: &'a Bump) ->
             "val" => parse_val(value, arena),
             "preserve" => {
                 // The preserve operator returns its argument as-is without parsing it as an operator
-                Ok(Token::literal(value.clone()))
+                Ok(Token::Literal(value.clone()))
             }
             _ => {
                 // Check if it's a standard operator
@@ -61,7 +73,7 @@ fn parse_object<'a>(entries: &'a [(&'a str, DataValue<'a>)], arena: &'a Bump) ->
         }
     } else if entries.is_empty() {
         // Empty object literal
-        Ok(Token::literal(helpers::object(arena, vec![])))
+        Ok(Token::Literal(helpers::object(arena, vec![])))
     } else {
         // For multi-key objects, treat the first key as an unknown operator
         // This matches the JSONLogic behavior where multi-key objects should
@@ -77,28 +89,22 @@ fn parse_object<'a>(entries: &'a [(&'a str, DataValue<'a>)], arena: &'a Bump) ->
 
 fn parse_val<'a>(value: &DataValue<'a>, arena: &'a Bump) -> Result<Token<'a>> {
     match value {
-        DataValue::String(s) => Ok(Token::variable(
-            arena.alloc(DataValue::String(s)),
-            None,
-            None,
-        )),
-        DataValue::Number(Number::Integer(i)) => Ok(Token::variable(
-            arena.alloc(DataValue::Number(Number::Integer(*i))),
-            None,
-            None,
-        )),
+        DataValue::String(s) => Ok(Token::Variable {
+            path: arena.alloc(DataValue::String(s)),
+            default: None,
+            scope_jump: None,
+        }),
+        DataValue::Number(Number::Integer(i)) => Ok(Token::Variable {
+            path: arena.alloc(DataValue::Number(Number::Integer(*i))),
+            default: None,
+            scope_jump: None,
+        }),
         DataValue::Array(arr) => {
             if arr.len() > 1 {
                 if let DataValue::Array([DataValue::Number(Number::Integer(i))]) = arr[0] {
                     let jump = *i as usize;
-
-                    let mut tokens = Vec::with_capacity(arr.len() - 1);
-                    for item in arr.iter().skip(1) {
-                        let token = parse_datavalue_internal(item, arena)?;
-                        tokens.push(Box::new(token));
-                    }
                     return Ok(Token::DynamicVariable {
-                        path_expr: Box::new(Token::ArrayLiteral(tokens)),
+                        path_expr: Box::new(Token::Literal(DataValue::Array(&arr[1..]))),
                         default: None,
                         scope_jump: Some(jump),
                     });
@@ -108,22 +114,17 @@ fn parse_val<'a>(value: &DataValue<'a>, arena: &'a Bump) -> Result<Token<'a>> {
             let is_dynamic = arr.iter().any(|item| matches!(item, DataValue::Object(_)));
 
             if is_dynamic {
-                let mut tokens = Vec::with_capacity(arr.len());
-                for item in arr.iter() {
-                    let token = parse_datavalue_internal(item, arena)?;
-                    tokens.push(Box::new(token));
-                }
-                Ok(Token::dynamic_variable(
-                    Box::new(Token::ArrayLiteral(tokens)),
-                    None,
-                    None,
-                ))
+                Ok(Token::DynamicVariable {
+                    path_expr: Box::new(Token::Literal(DataValue::Array(arr))),
+                    default: None,
+                    scope_jump: None,
+                })
             } else {
-                Ok(Token::variable(
-                    arena.alloc(DataValue::Array(arr)),
-                    None,
-                    None,
-                ))
+                Ok(Token::Variable {
+                    path: arena.alloc(DataValue::Array(arr)),
+                    default: None,
+                    scope_jump: None,
+                })
             }
         }
         DataValue::Object(entries) => {
@@ -154,11 +155,19 @@ fn parse_variable<'a>(var_value: &DataValue<'a>, arena: &'a Bump) -> Result<Toke
                 let path_array = arena.alloc(DataValue::Array(
                     arena.alloc_slice_fill_iter(parts_data_values),
                 ));
-                return Ok(Token::variable(path_array, None, None));
+                return Ok(Token::Variable {
+                    path: path_array,
+                    default: None,
+                    scope_jump: None,
+                });
             }
 
             let path_data_value = arena.alloc(DataValue::String(path));
-            Ok(Token::variable(path_data_value, None, None))
+            Ok(Token::Variable {
+                path: path_data_value,
+                default: None,
+                scope_jump: None,
+            })
         }
 
         // Variable reference with default value
@@ -166,7 +175,11 @@ fn parse_variable<'a>(var_value: &DataValue<'a>, arena: &'a Bump) -> Result<Toke
             // Handle empty array - treat it as a reference to the data itself
             if arr.is_empty() {
                 let path_data_value = arena.alloc(DataValue::Array(arr));
-                return Ok(Token::variable(path_data_value, None, None));
+                return Ok(Token::Variable {
+                    path: path_data_value,
+                    default: None,
+                    scope_jump: None,
+                });
             }
 
             // Get the path (first element)
@@ -186,14 +199,18 @@ fn parse_variable<'a>(var_value: &DataValue<'a>, arena: &'a Bump) -> Result<Toke
                 } else {
                     None
                 };
-                return Ok(Token::dynamic_variable(
-                    Box::new(path_expr),
-                    default_expr,
-                    None,
-                ));
+                return Ok(Token::DynamicVariable {
+                    path_expr: Box::new(path_expr),
+                    default: default_expr,
+                    scope_jump: None,
+                });
             }
 
-            Ok(Token::variable(path, default, None))
+            Ok(Token::Variable {
+                path,
+                default,
+                scope_jump: None,
+            })
         }
 
         // Anything else is an error
@@ -207,10 +224,12 @@ fn parse_variable<'a>(var_value: &DataValue<'a>, arena: &'a Bump) -> Result<Toke
 fn parse_operator<'a>(
     op_type: OperatorType,
     args_value: &DataValue<'a>,
-    arena: &'a Bump,
+    _arena: &'a Bump,
 ) -> Result<Token<'a>> {
-    let args_token = parse_datavalue_internal(args_value, arena)?;
-    Ok(Token::operator(op_type, Box::new(args_token)))
+    Ok(Token::Operator {
+        op_type,
+        args: Box::new(Token::Literal(args_value.clone())),
+    })
 }
 
 /// Parse a custom operator and its arguments
@@ -219,11 +238,10 @@ fn parse_custom_operator<'a>(
     args_value: &DataValue<'a>,
     arena: &'a Bump,
 ) -> Result<Token<'a>> {
-    let args_token = parse_datavalue_internal(args_value, arena)?;
-    Ok(Token::custom_operator(
-        arena.alloc_str(name),
-        Box::new(args_token),
-    ))
+    Ok(Token::CustomOperator {
+        name: arena.alloc_str(name),
+        args: Box::new(Token::Literal(args_value.clone())),
+    })
 }
 
 #[cfg(test)]
@@ -281,8 +299,9 @@ mod tests {
         // Array of literals
         let array_json = r#"[1, 2, 3]"#;
         let token = parser::parser(array_json, &arena).unwrap();
+        println!("{:?}", token);
         match token {
-            Token::Literal(DataValue::Array(arr)) => {
+            Token::ArrayLiteral(arr) => {
                 assert_eq!(arr.len(), 3);
                 match arr[0] {
                     DataValue::Number(Number::Integer(i)) => assert_eq!(i, 1),
