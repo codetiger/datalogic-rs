@@ -27,6 +27,7 @@ fn convert_number<'a>(value: f64) -> DataValue<'a> {
 /// A DataValue containing the result of the addition
 pub fn evaluate_add<'a>(values: &[DataValue<'a>], arena: &'a Bump) -> Result<&'a DataValue<'a>> {
     // Handle empty array case
+    println!("values: {:?}", values);
     if values.is_empty() {
         return Ok(arena.alloc(helpers::int(0)));
     }
@@ -58,7 +59,7 @@ pub fn evaluate_subtract<'a>(
     }
 
     // Get the first value as the starting point
-    let first = match values[0] {
+    let first = match values[0].coerce_to_number() {
         DataValue::Number(Number::Integer(i)) => i as f64,
         DataValue::Number(Number::Float(f)) => f,
         _ => {
@@ -67,6 +68,10 @@ pub fn evaluate_subtract<'a>(
             ))
         }
     };
+
+    if values.len() == 1 {
+        return Ok(arena.alloc(convert_number(-first)));
+    }
 
     let sum = values
         .iter()
@@ -122,7 +127,7 @@ pub fn evaluate_divide<'a>(values: &[DataValue<'a>], arena: &'a Bump) -> Result<
         return Ok(arena.alloc(helpers::int(0)));
     }
 
-    let first = match values[0] {
+    let first = match values[0].coerce_to_number() {
         DataValue::Number(Number::Integer(i)) => i as f64,
         DataValue::Number(Number::Float(f)) => f,
         _ => {
@@ -131,6 +136,10 @@ pub fn evaluate_divide<'a>(values: &[DataValue<'a>], arena: &'a Bump) -> Result<
             ))
         }
     };
+
+    if values.len() == 1 {
+        return Ok(arena.alloc(convert_number(1.0 / first)));
+    }
 
     let product = values
         .iter()

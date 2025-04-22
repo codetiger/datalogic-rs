@@ -240,7 +240,7 @@ mod tests {
             Token::Operator { op_type, args } => {
                 assert_eq!(*op_type, OperatorType::And);
                 match &**args {
-                    Token::Literal(DataValue::Array(arr)) => {
+                    Token::ArrayLiteral(arr) => {
                         assert_eq!(arr.len(), 3);
                         assert!(matches!(arr[0], DataValue::Bool(true)));
                         assert!(matches!(arr[1], DataValue::Bool(false)));
@@ -263,7 +263,7 @@ mod tests {
             Token::CustomOperator { name, args } => {
                 assert_eq!(*name, "custom_op");
                 match &**args {
-                    Token::Literal(DataValue::Array(arr)) => {
+                    Token::ArrayLiteral(arr) => {
                         assert_eq!(arr.len(), 3);
                         assert!(matches!(arr[0], DataValue::Number(Number::Integer(1))));
                         assert!(matches!(arr[1], DataValue::Number(Number::Integer(2))));

@@ -6,7 +6,6 @@
 pub mod arithmetic;
 pub mod collection;
 pub mod comparison;
-pub mod context;
 pub mod control;
 pub mod datetime;
 pub mod logic;

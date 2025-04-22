@@ -36,6 +36,7 @@ fn parse_array<'a>(arr: &[DataValue<'a>], arena: &'a Bump) -> Result<Token<'a>> 
         let token = parse_datavalue_internal(item, arena)?;
         if matches!(token, Token::Literal(_)) {
             values.push(item.clone());
+            tokens.push(Box::new(token));
         } else {
             tokens.push(Box::new(token));
         }
@@ -141,30 +142,59 @@ fn parse_val<'a>(value: &DataValue<'a>, arena: &'a Bump) -> Result<Token<'a>> {
     }
 }
 
+fn parse_variable_path<'a>(path: &'a str, arena: &'a Bump) -> Result<&'a DataValue<'a>> {
+    if path.contains('.') {
+        let parts: Vec<&str> = path.split('.').collect();
+        let parts_data_values: Vec<DataValue> = parts
+            .iter()
+            .map(|p| {
+                if let Ok(number) = p.parse::<i64>() {
+                    DataValue::Number(Number::Integer(number))
+                } else {
+                    DataValue::String(p)
+                }
+            })
+            .collect();
+        let path_array = arena.alloc(DataValue::Array(
+            arena.alloc_slice_fill_iter(parts_data_values),
+        ));
+        return Ok(path_array);
+    }
+
+    if path.is_empty() {
+        return Ok(arena.alloc(DataValue::Array(&[])));
+    }
+
+    if let Ok(number) = path.parse::<i64>() {
+        return Ok(arena.alloc(DataValue::Number(Number::Integer(number))));
+    }
+
+    Ok(arena.alloc(DataValue::String(path)))
+}
+
 /// Parses a variable reference.
 fn parse_variable<'a>(var_value: &DataValue<'a>, arena: &'a Bump) -> Result<Token<'a>> {
     match var_value {
         // Simple variable reference
         DataValue::String(path) => {
-            // For compatibility with the test suite, if the path contains dots,
-            // we need to split it and handle it as a multi-level path
-            if path.contains('.') {
-                let parts: Vec<&str> = path.split('.').collect();
-                let parts_data_values: Vec<DataValue> =
-                    parts.iter().map(|p| DataValue::String(p)).collect();
-                let path_array = arena.alloc(DataValue::Array(
-                    arena.alloc_slice_fill_iter(parts_data_values),
-                ));
-                return Ok(Token::Variable {
-                    path: path_array,
-                    default: None,
-                    scope_jump: None,
-                });
-            }
-
-            let path_data_value = arena.alloc(DataValue::String(path));
+            let value = parse_variable_path(path, arena)?;
             Ok(Token::Variable {
-                path: path_data_value,
+                path: value,
+                default: None,
+                scope_jump: None,
+            })
+        }
+
+        DataValue::Number(Number::Integer(i)) => Ok(Token::Variable {
+            path: arena.alloc(DataValue::Number(Number::Integer(*i))),
+            default: None,
+            scope_jump: None,
+        }),
+
+        DataValue::Null => {
+            let value = arena.alloc(DataValue::Array(&[]));
+            Ok(Token::Variable {
+                path: value,
                 default: None,
                 scope_jump: None,
             })
@@ -228,7 +258,7 @@ fn parse_operator<'a>(
 ) -> Result<Token<'a>> {
     Ok(Token::Operator {
         op_type,
-        args: Box::new(Token::Literal(args_value.clone())),
+        args: Box::new(parse_datavalue_internal(args_value, _arena)?),
     })
 }
 
@@ -240,7 +270,7 @@ fn parse_custom_operator<'a>(
 ) -> Result<Token<'a>> {
     Ok(Token::CustomOperator {
         name: arena.alloc_str(name),
-        args: Box::new(Token::Literal(args_value.clone())),
+        args: Box::new(parse_datavalue_internal(args_value, arena)?),
     })
 }
 
@@ -433,8 +463,8 @@ mod tests {
         match *token {
             Token::Operator { op_type, ref args } => {
                 assert_eq!(op_type, OperatorType::And);
-                match **args {
-                    Token::Literal(DataValue::Array(arr)) => {
+                match &**args {
+                    Token::ArrayLiteral(arr) => {
                         assert_eq!(arr.len(), 3);
                         assert!(matches!(arr[0], DataValue::Bool(true)));
                         assert!(matches!(arr[1], DataValue::Bool(false)));
@@ -487,8 +517,8 @@ mod tests {
         match *token {
             Token::CustomOperator { name, ref args } => {
                 assert_eq!(name, "custom_op");
-                match **args {
-                    Token::Literal(DataValue::Array(arr)) => {
+                match &**args {
+                    Token::ArrayLiteral(arr) => {
                         assert_eq!(arr.len(), 3);
                         assert!(matches!(arr[0], DataValue::Number(Number::Integer(1))));
                         assert!(matches!(arr[1], DataValue::Number(Number::Integer(2))));
