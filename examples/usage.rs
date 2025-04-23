@@ -6,7 +6,7 @@ fn main() {
     // Create memory arena
     let arena = Bump::new();
 
-    let rule = r#"{"+":[{"+": [1, 2]}, {"+": [3, 4]}]}"#;
+    let rule = r#"{"+":"0"}"#;
 
     // Parse the rule
     let token = parser::parser(rule, &arena).expect("Failed to parse rule");

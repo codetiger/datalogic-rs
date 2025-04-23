@@ -32,7 +32,7 @@ pub fn evaluate_add<'a>(values: &[DataValue<'a>], arena: &'a Bump) -> Result<&'a
         return Ok(arena.alloc(helpers::int(0)));
     }
 
-    let mut sum = DataValue::Number(Number::Float(0.0));
+    let mut sum = DataValue::Number(Number::Integer(0));
 
     for val in values {
         sum = (sum + val.coerce_to_number())?;

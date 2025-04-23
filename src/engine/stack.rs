@@ -4,6 +4,7 @@
 //! non-recursive evaluation of JSONLogic expressions.
 
 use crate::operators::arithmetic;
+use crate::operators::comparison;
 use crate::operators::logic;
 use crate::parser::{EvaluationStrategy, OperatorType, Token};
 use bumpalo::Bump;
@@ -138,6 +139,9 @@ impl<'a> InstructionStack<'a> {
                                 }
                             }
                             _ => {
+                                self.instructions
+                                    .push(Instruction::CollectOperatorArgs(*op_type, 1));
+
                                 // For other argument types, continue with recursive processing
                                 self.process_token(args, data, arena)?;
                             }
@@ -280,6 +284,15 @@ impl<'a> InstructionStack<'a> {
             OperatorType::Or => logic::evaluate_or(args, data, arena)?,
             OperatorType::Not => logic::evaluate_not(args, data, arena)?,
             OperatorType::NullCoalesce => logic::evaluate_null_coalesce(args, data, arena)?,
+
+            OperatorType::Equal => comparison::evaluate_equal(args, data, arena)?,
+            OperatorType::StrictEqual => comparison::evaluate_strict_equal(args, data, arena)?,
+            OperatorType::NotEqual => comparison::evaluate_not_equal(args, data, arena)?,
+            OperatorType::StrictNotEqual => comparison::evaluate_strict_not_equal(args, data, arena)?,
+            OperatorType::GT => comparison::evaluate_gt(args, data, arena)?,
+            OperatorType::LT => comparison::evaluate_lt(args, data, arena)?,
+            OperatorType::GTE => comparison::evaluate_gte(args, data, arena)?,
+            OperatorType::LTE => comparison::evaluate_lte(args, data, arena)?,
 
             // For other lazy operators that might be implemented later
             _ => {

@@ -121,6 +121,16 @@ impl OperatorType {
             | OperatorType::Some
             | OperatorType::None => EvaluationStrategy::Lazy,
 
+            // Comparison operators
+            OperatorType::Equal
+            | OperatorType::StrictEqual
+            | OperatorType::NotEqual
+            | OperatorType::StrictNotEqual
+            | OperatorType::GT
+            | OperatorType::GTE
+            | OperatorType::LT
+            | OperatorType::LTE => EvaluationStrategy::Lazy,
+
             // Default for arithmetic and most other operators - eager evaluation
             _ => EvaluationStrategy::Eager,
         }
