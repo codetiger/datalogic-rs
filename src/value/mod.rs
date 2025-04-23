@@ -34,6 +34,9 @@ pub trait DataValueExt<'a> {
 
     /// Coerce to number according to JSONLogic rules
     fn coerce_to_number(&self) -> DataValue<'a>;
+
+    /// Check if key exists in DataValue
+    fn key_exists(&self, key: &str) -> bool;
 }
 
 // Implement the extension trait for DataValue
@@ -56,5 +59,32 @@ impl<'a> DataValueExt<'a> for DataValue<'a> {
 
     fn coerce_to_number(&self) -> DataValue<'a> {
         convert::coerce_to_number(self)
+    }
+
+    fn key_exists(&self, key: &str) -> bool {
+        if key.is_empty() {
+            return false;
+        }
+
+        if key.contains('.') {
+            let key_components = key.split('.').collect::<Vec<&str>>();
+            let mut current = Some(self);
+
+            for component in key_components {
+                match current {
+                    Some(DataValue::Object(_)) => {
+                        current = current.unwrap().get(component);
+                    }
+                    _ => return false,
+                }
+            }
+
+            current.is_some()
+        } else {
+            match self {
+                DataValue::Object(_) => self.contains_key(key),
+                _ => false,
+            }
+        }
     }
 }

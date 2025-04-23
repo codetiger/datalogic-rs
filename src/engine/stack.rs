@@ -6,6 +6,7 @@
 use crate::operators::arithmetic;
 use crate::operators::comparison;
 use crate::operators::logic;
+use crate::operators::misc;
 use crate::parser::{EvaluationStrategy, OperatorType, Token};
 use bumpalo::Bump;
 use datavalue_rs::Number;
@@ -195,68 +196,41 @@ impl<'a> InstructionStack<'a> {
                 default,
                 scope_jump,
             } => {
-                if scope_jump.is_none() {
-                    match path {
-                        DataValue::Array([]) | DataValue::Null => {
-                            self.values.push(data);
-                        }
-                        DataValue::Array(items) => {
-                            let mut context = Some(data);
-                            for item in items.iter() {
-                                match item {
-                                    DataValue::String(key) => {
-                                        context = context.unwrap_or(&DataValue::Null).get(key)
-                                    }
-                                    DataValue::Number(Number::Integer(i)) => {
-                                        context = context
-                                            .unwrap_or(&DataValue::Null)
-                                            .get_index(*i as usize)
-                                    }
-                                    _ => unreachable!(),
-                                }
-                            }
-                            if let Some(context) = context {
-                                self.values.push(context);
-                            } else if let Some(default) = default {
-                                self.values.push(arena.alloc(default));
-                            } else {
-                                self.values.push(arena.alloc(DataValue::Null));
-                            }
-                        }
-                        DataValue::String(key) => {
-                            let value = data.get(key);
-                            if let Some(value) = value {
-                                self.values.push(value);
-                            } else if let Some(default) = default {
-                                self.values.push(arena.alloc(default));
-                            } else {
-                                self.values.push(arena.alloc(DataValue::Null));
-                            }
-                        }
-                        DataValue::Number(Number::Integer(i)) => {
-                            let value = data.get_index(*i as usize);
-                            if let Some(value) = value {
-                                self.values.push(value);
-                            } else if let Some(default) = default {
-                                self.values.push(arena.alloc(default));
-                            } else {
-                                self.values.push(arena.alloc(DataValue::Null));
-                            }
-                        }
-                        _ => {
-                            return Err(datavalue_rs::Error::Custom(format!(
-                                "Invalid path: {:?}",
-                                path
-                            )))
-                        }
-                    }
-                }
+                self.evaluate_variable(path, default, scope_jump, data, arena)?;
             }
 
-            Token::DynamicVariable { .. } => {
-                return Err(datavalue_rs::Error::Custom(
-                    "Dynamic variables not yet implemented".to_string(),
-                ));
+            Token::DynamicVariable { 
+                path_expr,
+                default,
+                scope_jump,
+            } => {
+                // First evaluate the path expression to get the actual path
+                let path_value = self.evaluate_token(path_expr, data, arena)?;
+                
+                // For a dynamic variable, evaluate the default expression if provided
+                let evaluated_default = match default {
+                    Some(def_expr) => {
+                        let def_value = self.evaluate_token(def_expr, data, arena)?;
+                        Some(def_value)
+                    },
+                    None => None,
+                };
+                
+                // Convert string paths like "pie.filling" to a proper path array
+                let path = match path_value {
+                    DataValue::String(s) if s.contains('.') => {
+                        // Split the string by dots and create a path array
+                        let parts: Vec<&str> = s.split('.').collect();
+                        let path_parts: Vec<DataValue> = parts.into_iter()
+                            .map(|part| DataValue::String(arena.alloc_str(part)))
+                            .collect();
+                        arena.alloc(DataValue::Array(arena.alloc_slice_fill_iter(path_parts)))
+                    },
+                    _ => path_value,
+                };
+                
+                // Then handle it like a regular variable
+                self.evaluate_variable(path, &evaluated_default, scope_jump, data, arena)?;
             }
 
             Token::CustomOperator { .. } => {
@@ -283,17 +257,20 @@ impl<'a> InstructionStack<'a> {
             OperatorType::And => logic::evaluate_and(args, data, arena)?,
             OperatorType::Or => logic::evaluate_or(args, data, arena)?,
             OperatorType::Not => logic::evaluate_not(args, data, arena)?,
+            OperatorType::DoubleBang => logic::evaluate_double_bang(args, data, arena)?,
             OperatorType::NullCoalesce => logic::evaluate_null_coalesce(args, data, arena)?,
 
             OperatorType::Equal => comparison::evaluate_equal(args, data, arena)?,
             OperatorType::StrictEqual => comparison::evaluate_strict_equal(args, data, arena)?,
             OperatorType::NotEqual => comparison::evaluate_not_equal(args, data, arena)?,
-            OperatorType::StrictNotEqual => comparison::evaluate_strict_not_equal(args, data, arena)?,
+            OperatorType::StrictNotEqual => {
+                comparison::evaluate_strict_not_equal(args, data, arena)?
+            }
             OperatorType::GT => comparison::evaluate_gt(args, data, arena)?,
             OperatorType::LT => comparison::evaluate_lt(args, data, arena)?,
             OperatorType::GTE => comparison::evaluate_gte(args, data, arena)?,
             OperatorType::LTE => comparison::evaluate_lte(args, data, arena)?,
-
+            
             // For other lazy operators that might be implemented later
             _ => {
                 return Err(datavalue_rs::Error::Custom(format!(
@@ -397,6 +374,30 @@ impl<'a> InstructionStack<'a> {
                 let result = arithmetic::evaluate_floor(&args, arena)?;
                 self.values.push(result);
             }
+            OperatorType::Missing => {
+                // Pass the arguments directly
+                let result = match misc::evaluate_missing_args(&args, self.data.unwrap(), arena) {
+                    Ok(r) => r,
+                    Err(e) => return Err(e),
+                };
+                self.values.push(result);
+            }
+            OperatorType::MissingSome => {
+                // Pass the arguments directly
+                let result = match misc::evaluate_missing_some_args(&args, self.data.unwrap(), arena) {
+                    Ok(r) => r,
+                    Err(e) => return Err(e),
+                };
+                self.values.push(result);
+            }
+            OperatorType::Exists => {
+                // Pass the arguments directly
+                let result = match misc::evaluate_exists_args(&args, self.data.unwrap(), arena) {
+                    Ok(r) => r,
+                    Err(e) => return Err(e),
+                };
+                self.values.push(result);
+            }
             _ => {
                 return Err(datavalue_rs::Error::Custom(format!(
                     "Operator {:?} not yet implemented in stack engine",
@@ -406,6 +407,80 @@ impl<'a> InstructionStack<'a> {
         }
 
         Ok(())
+    }
+
+    fn evaluate_variable(&mut self, path: &'a DataValue<'a>, default: &Option<&'a DataValue<'a>>, scope_jump: &Option<usize>, data: &'a DataValue<'a>, arena: &'a Bump) -> Result<()> {
+        if scope_jump.is_none() {
+            match path {
+                DataValue::Array([]) | DataValue::Null => {
+                    self.values.push(data);
+                }
+                DataValue::Array(items) => {
+                    let mut context = Some(data);
+                    for item in items.iter() {
+                        match item {
+                            DataValue::String(key) => {
+                                context = context.unwrap_or(&DataValue::Null).get(key)
+                            }
+                            DataValue::Number(Number::Integer(i)) => {
+                                context = context
+                                    .unwrap_or(&DataValue::Null)
+                                    .get_index(*i as usize)
+                            }
+                            _ => unreachable!(),
+                        }
+                    }
+                    if let Some(context) = context {
+                        self.values.push(context);
+                    } else if let Some(default) = default {
+                        self.values.push(arena.alloc(default));
+                    } else {
+                        self.values.push(arena.alloc(DataValue::Null));
+                    }
+                }
+                DataValue::String(key) => {
+                    let value = data.get(key);
+                    if let Some(value) = value {
+                        self.values.push(value);
+                    } else if let Some(default) = default {
+                        self.values.push(arena.alloc(default));
+                    } else {
+                        self.values.push(arena.alloc(DataValue::Null));
+                    }
+                }
+                DataValue::Number(Number::Integer(i)) => {
+                    let value = data.get_index(*i as usize);
+                    if let Some(value) = value {
+                        self.values.push(value);
+                    } else if let Some(default) = default {
+                        self.values.push(arena.alloc(default));
+                    } else {
+                        self.values.push(arena.alloc(DataValue::Null));
+                    }
+                }
+                _ => {
+                    return Err(datavalue_rs::Error::Custom(format!(
+                        "Invalid path: {:?}",
+                        path
+                    )))
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Evaluates a token and returns its value
+    fn evaluate_token(
+        &mut self,
+        token: &'a Token<'a>,
+        data: &'a DataValue<'a>,
+        arena: &'a Bump,
+    ) -> Result<&'a DataValue<'a>> {
+        // Create a temporary instruction stack to evaluate the token
+        let mut temp_stack = InstructionStack::new(token);
+        
+        // Evaluate the token and return the result
+        temp_stack.evaluate(data, arena)
     }
 }
 

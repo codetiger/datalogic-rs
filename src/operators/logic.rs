@@ -238,32 +238,42 @@ pub fn evaluate_not<'a>(
     data: &'a DataValue<'a>,
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
-    // Extract the value to negate
-    let value = match args {
-        // If args is a literal (e.g., {"not": true}), use it directly
-        Token::Literal(value) => value,
-
-        // If args is an array (e.g., {"not": [expression]}), evaluate the first item
-        Token::Array(tokens) => {
-            if tokens.is_empty() {
-                // Empty array case - not([]) = not(false) = true
-                return Ok(arena.alloc(helpers::boolean(true)));
-            }
-
-            // Evaluate the first token
-            let val = evaluate(&tokens[0], data, arena)?;
-            return Ok(arena.alloc(helpers::boolean(!val.is_truthy())));
+    let value = evaluate(args, data, arena)?;
+    match value {
+        DataValue::Array(values) => {
+            Ok(arena.alloc(helpers::boolean(!values[0].is_truthy())))
         }
-
-        // Any other token type, evaluate it
         _ => {
-            let val = evaluate(args, data, arena)?;
-            return Ok(arena.alloc(helpers::boolean(!val.is_truthy())));
+            Ok(arena.alloc(helpers::boolean(!value.is_truthy())))
         }
-    };
+    }
+}
 
-    // Evaluate the negation
-    Ok(arena.alloc(helpers::boolean(!value.is_truthy())))
+/// Evaluates a double negation operation (!!)
+///
+/// # Arguments
+///
+/// * `args` - The token containing the arguments
+/// * `data` - The data context
+/// * `arena` - The arena allocator
+///
+/// # Returns
+///
+/// The result of the double negation operation
+pub fn evaluate_double_bang<'a>(
+    args: &'a Token<'a>,
+    data: &'a DataValue<'a>,
+    arena: &'a Bump,
+) -> Result<&'a DataValue<'a>> {
+    let value = evaluate(args, data, arena)?;
+    match value {
+        DataValue::Array(values) => {
+            Ok(arena.alloc(helpers::boolean(values[0].is_truthy())))
+        }
+        _ => {
+            Ok(arena.alloc(helpers::boolean(value.is_truthy())))
+        }
+    }
 }
 
 /// Evaluates a null coalescing operation (??)
@@ -306,3 +316,4 @@ pub fn evaluate_null_coalesce<'a>(
         }
     }
 }
+

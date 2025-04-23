@@ -27,7 +27,6 @@ fn convert_number<'a>(value: f64) -> DataValue<'a> {
 /// A DataValue containing the result of the addition
 pub fn evaluate_add<'a>(values: &[DataValue<'a>], arena: &'a Bump) -> Result<&'a DataValue<'a>> {
     // Handle empty array case
-    println!("values: {:?}", values);
     if values.is_empty() {
         return Ok(arena.alloc(helpers::int(0)));
     }

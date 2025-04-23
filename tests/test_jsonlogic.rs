@@ -83,7 +83,6 @@ fn run_test_case(test_case: &TestCase) -> TestResult<()> {
             return Err(format!("Failed to parse rule: {}", e));
         }
     };
-    println!("Parsed rule: {:?}", rule_logic);
 
     // Parse the data (or use empty object if not provided)
     let empty_json = json!({});

@@ -56,19 +56,20 @@ pub enum OperatorType {
     LTE,            // <=
 
     // Logic operators
-    If,
-    And,
-    Or,
-    Not,
-    NullCoalesce, // ?? (null coalescing)
+    If,             // if (conditional)
+    And,            // && (logical AND)
+    Or,             // || (logical OR)
+    Not,            // ! (logical NOT)
+    DoubleBang,     // !! (double negation)
+    NullCoalesce,   // ?? (null coalescing)
 
     // Special operators
     Var,         // Variable access
     Missing,     // Check if variables are missing
-    MissingAll,  // Check if all variables are missing
     MissingSome, // Check if some variables are missing
     Val,         // Evaluate a value
     Exists,      // Check if a variable exists
+
     Map,         // Map an array
     Filter,      // Filter an array
     Reduce,      // Reduce an array
@@ -104,14 +105,13 @@ impl OperatorType {
             | OperatorType::And
             | OperatorType::Or
             | OperatorType::Not
+            | OperatorType::DoubleBang
             | OperatorType::NullCoalesce => EvaluationStrategy::Lazy,
 
             // Variables and data access operations
-            OperatorType::Var
-            | OperatorType::Missing
-            | OperatorType::MissingAll
+            OperatorType::Missing
             | OperatorType::MissingSome
-            | OperatorType::Exists => EvaluationStrategy::Lazy,
+            | OperatorType::Exists => EvaluationStrategy::Eager,
 
             // Array operations that might need special evaluation
             OperatorType::Map
@@ -166,18 +166,20 @@ impl FromStr for OperatorType {
 
             // Logic operators
             "if" => Ok(OperatorType::If),
+            "?:" => Ok(OperatorType::If),
             "and" => Ok(OperatorType::And),
             "or" => Ok(OperatorType::Or),
-            "not" => Ok(OperatorType::Not),
+            "!" => Ok(OperatorType::Not),
+            "!!" => Ok(OperatorType::DoubleBang),
             "??" => Ok(OperatorType::NullCoalesce),
 
-            // Special operators
+            // Context access operators
             "var" => Ok(OperatorType::Var),
-            "missing" => Ok(OperatorType::Missing),
-            "missing_all" => Ok(OperatorType::MissingAll),
-            "missing_some" => Ok(OperatorType::MissingSome),
             "val" => Ok(OperatorType::Val),
+            "missing" => Ok(OperatorType::Missing),
+            "missing_some" => Ok(OperatorType::MissingSome),
             "exists" => Ok(OperatorType::Exists),
+
             "map" => Ok(OperatorType::Map),
             "filter" => Ok(OperatorType::Filter),
             "reduce" => Ok(OperatorType::Reduce),
@@ -214,7 +216,8 @@ impl fmt::Display for OperatorType {
             OperatorType::If => "if",
             OperatorType::And => "and",
             OperatorType::Or => "or",
-            OperatorType::Not => "not",
+            OperatorType::Not => "!",
+            OperatorType::DoubleBang => "!!",
             OperatorType::NullCoalesce => "??",
 
             // Comparison operators
@@ -230,7 +233,6 @@ impl fmt::Display for OperatorType {
             // Special operators
             OperatorType::Var => "var",
             OperatorType::Missing => "missing",
-            OperatorType::MissingAll => "missing_all",
             OperatorType::MissingSome => "missing_some",
             OperatorType::Val => "val",
             OperatorType::Exists => "exists",
@@ -334,7 +336,6 @@ impl<'a> Token<'a> {
                 match op_type {
                     OperatorType::Var
                     | OperatorType::Missing
-                    | OperatorType::MissingAll
                     | OperatorType::MissingSome
                     | OperatorType::Exists => false,
 

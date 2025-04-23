@@ -16,7 +16,6 @@ pub fn evaluate_equal<'a>(
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
     let values = get_arg_values(args, data, arena)?;
-    println!("values: {:?}", values);
 
     if values.len() < 2 {
         return Ok(arena.alloc(DataValue::Bool(true))); // One or zero values is always true
@@ -39,8 +38,7 @@ pub fn evaluate_strict_equal<'a>(
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
     let values = get_arg_values(args, data, arena)?;
-    println!("values: {:?}", values);
-    
+
     if values.len() < 2 {
         return Ok(arena.alloc(DataValue::Bool(true))); // One or zero values is always true
     }
