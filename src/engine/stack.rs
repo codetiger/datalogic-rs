@@ -10,13 +10,14 @@ use crate::operators::logic;
 use crate::operators::misc;
 use crate::operators::string;
 use crate::parser::{EvaluationStrategy, OperatorType, Token};
+use bumpalo::collections::Vec as BumpVec;
 use bumpalo::Bump;
 use datavalue_rs::Number;
 use datavalue_rs::{DataValue, Result};
 
 /// Represents an instruction on the evaluation stack
-#[derive(Debug)]
-enum Instruction<'a> {
+#[derive(Debug, Clone)]
+pub enum Instruction<'a> {
     /// Evaluate a token
     Evaluate(&'a Token<'a>),
 
@@ -32,9 +33,7 @@ enum Instruction<'a> {
 
 /// A stack of instructions for evaluating JSONLogic expressions
 pub struct InstructionStack<'a> {
-    instructions: Vec<Instruction<'a>>,
-    values: Vec<&'a DataValue<'a>>,
-    data: Option<&'a DataValue<'a>>,
+    pub instructions: Vec<Instruction<'a>>,
 }
 
 impl<'a> InstructionStack<'a> {
@@ -42,11 +41,7 @@ impl<'a> InstructionStack<'a> {
     pub fn new(token: &'a Token<'a>) -> Self {
         let instructions = vec![Instruction::Evaluate(token)];
 
-        Self {
-            instructions,
-            values: Vec::new(),
-            data: None,
-        }
+        Self { instructions }
     }
 
     /// Evaluates the instruction stack
@@ -55,41 +50,42 @@ impl<'a> InstructionStack<'a> {
         data: &'a DataValue<'a>,
         arena: &'a Bump,
     ) -> Result<&'a DataValue<'a>> {
-        // Store data context for lazy operators
-        self.data = Some(data);
+        let mut values = BumpVec::new_in(arena);
 
         // Continue processing instructions until the stack is empty
         while let Some(instruction) = self.instructions.pop() {
             match instruction {
                 Instruction::Evaluate(token) => {
-                    self.process_token(token, data, arena)?;
+                    self.process_token(&mut values, token, data, arena)?;
                 }
                 Instruction::CollectArray(count) => {
-                    self.collect_array(count, arena)?;
+                    self.collect_array(&mut values, count, arena)?;
                 }
                 Instruction::CollectOperatorArgs(op_type, count) => {
-                    self.collect_operator_args(op_type, count, arena)?;
+                    self.collect_operator_args(&mut values, op_type, count, data, arena)?;
                 }
                 Instruction::EvaluateLazyOperator(op_type, args) => {
-                    self.evaluate_lazy_operator(op_type, args, data, arena)?;
+                    let result = self.evaluate_lazy_operator(op_type, args, data, arena)?;
+                    values.push(result);
                 }
             }
         }
 
         // The final result should be the only value on the stack
-        if self.values.len() == 1 {
-            Ok(self.values.pop().unwrap())
+        if values.len() == 1 {
+            Ok(values.pop().unwrap())
         } else {
             Err(datavalue_rs::Error::Custom(format!(
                 "Invalid evaluation result: {} values on stack",
-                self.values.len()
+                values.len()
             )))
         }
     }
 
-    /// Processes a token and adds appropriate instructions to the stack
+    /// Processes a token and adds appropriate values to the stack
     fn process_token(
         &mut self,
+        values: &mut BumpVec<&'a DataValue<'a>>,
         token: &'a Token<'a>,
         data: &'a DataValue<'a>,
         arena: &'a Bump,
@@ -97,77 +93,95 @@ impl<'a> InstructionStack<'a> {
         match token {
             // For literal values, just push them onto the value stack
             Token::Literal(value) => {
-                self.values.push(value);
+                values.push(value);
             }
 
             Token::ArrayLiteral(items) => {
-                let count = items.len();
-
-                self.instructions.push(Instruction::CollectArray(count));
-
+                // Push all items directly onto the stack
                 for item in items {
-                    self.values.push(item);
+                    values.push(item);
                 }
+                // Collect these items into an array
+                self.collect_array(values, items.len(), arena)?;
             }
 
             // For operators, handle based on the type and evaluation strategy
             Token::Operator { op_type, args } => {
+                // Special handling for missing operator
+                if *op_type == OperatorType::Missing {
+                    let mut new_values = BumpVec::new_in(arena);
+                    self.process_token(&mut new_values, args, data, arena)?;
+                    let args_array = if new_values.len() == 1 {
+                        // For single value, create an array with it
+                        let arg = new_values[0];
+                        vec![arg.clone()]
+                    } else {
+                        // Already an array of values
+                        new_values.iter().map(|&v| v.clone()).collect()
+                    };
+
+                    let result = misc::evaluate_missing_args(&args_array, data, arena)?;
+                    values.push(result);
+                    return Ok(());
+                }
+
                 // Check the evaluation strategy for this operator
                 match op_type.evaluation_strategy() {
                     EvaluationStrategy::Eager => {
                         match &**args {
                             Token::ArrayLiteral(items) => {
-                                let values: Vec<&DataValue> = items.iter().collect();
-                                let count = values.len();
-
-                                // First push the instruction to apply the operator
-                                self.instructions
-                                    .push(Instruction::CollectOperatorArgs(*op_type, count));
-
-                                // Then push all values (in reverse since stack is LIFO)
-                                for value in values {
-                                    self.values.push(value);
+                                // For ArrayLiteral, just push the items directly and apply the operator
+                                for item in items {
+                                    values.push(item);
                                 }
+                                self.collect_operator_args(
+                                    values,
+                                    *op_type,
+                                    items.len(),
+                                    data,
+                                    arena,
+                                )?;
                             }
                             Token::Array(items) => {
-                                let count = items.len();
-
-                                // First push the instruction to apply the operator after evaluating all items
-                                self.instructions
-                                    .push(Instruction::CollectOperatorArgs(*op_type, count));
-
-                                // Then process each item, which could be another operator
-                                for item in items.iter().rev() {
-                                    self.instructions.push(Instruction::Evaluate(item));
+                                // For nested tokens, process each one first
+                                for item in items {
+                                    self.process_token(values, item, data, arena)?;
                                 }
+                                self.collect_operator_args(
+                                    values,
+                                    *op_type,
+                                    items.len(),
+                                    data,
+                                    arena,
+                                )?;
                             }
+                            // Regular handling for single argument operators
                             _ => {
-                                self.instructions
-                                    .push(Instruction::CollectOperatorArgs(*op_type, 1));
-
-                                // For other argument types, continue with recursive processing
-                                self.process_token(args, data, arena)?;
+                                // Process the single argument
+                                self.process_token(values, args, data, arena)?;
+                                self.collect_operator_args(values, *op_type, 1, data, arena)?;
                             }
                         }
                     }
                     EvaluationStrategy::Lazy => {
-                        // For lazy operators, push a special instruction that will handle the evaluation
-                        self.instructions
-                            .push(Instruction::EvaluateLazyOperator(*op_type, args));
+                        // For lazy operators, evaluate them directly
+                        let result = self.evaluate_lazy_operator(*op_type, args, data, arena)?;
+                        values.push(result);
                     }
                     EvaluationStrategy::Predicate => {
-                        // For predicate operators, we could implement special handling if needed
-                        // For now, treat them the same as eager operators
+                        // For predicate operators, handle each item
                         match &**args {
                             Token::Array(items) => {
-                                let count = items.len();
-
-                                self.instructions
-                                    .push(Instruction::CollectOperatorArgs(*op_type, count));
-
-                                for item in items.iter().rev() {
-                                    self.instructions.push(Instruction::Evaluate(item));
+                                for item in items {
+                                    self.process_token(values, item, data, arena)?;
                                 }
+                                self.collect_operator_args(
+                                    values,
+                                    *op_type,
+                                    items.len(),
+                                    data,
+                                    arena,
+                                )?;
                             }
                             _ => {
                                 return Err(datavalue_rs::Error::Custom(
@@ -181,24 +195,20 @@ impl<'a> InstructionStack<'a> {
 
             // For arrays, evaluate each item and collect the results
             Token::Array(items) => {
-                let count = items.len();
-
-                // Push CollectArray instruction first (to be executed after all items are evaluated)
-                self.instructions.push(Instruction::CollectArray(count));
-
-                // Then push each item evaluation instruction in reverse order
-                for item in items.iter().rev() {
-                    self.instructions.push(Instruction::Evaluate(item));
+                for item in items {
+                    self.process_token(values, item, data, arena)?;
                 }
+                // Collect these results into an array
+                self.collect_array(values, items.len(), arena)?;
             }
 
-            // Other token types would be handled here
+            // Handle variables
             Token::Variable {
                 path,
                 default,
                 scope_jump,
             } => {
-                self.evaluate_variable(path, default, scope_jump, data, arena)?;
+                self.evaluate_variable(values, path, default, scope_jump, data, arena)?;
             }
 
             Token::DynamicVariable {
@@ -233,7 +243,7 @@ impl<'a> InstructionStack<'a> {
                 };
 
                 // Then handle it like a regular variable
-                self.evaluate_variable(path, &evaluated_default, scope_jump, data, arena)?;
+                self.evaluate_variable(values, path, &evaluated_default, scope_jump, data, arena)?;
             }
 
             Token::CustomOperator { .. } => {
@@ -253,7 +263,7 @@ impl<'a> InstructionStack<'a> {
         args: &'a Token<'a>,
         data: &'a DataValue<'a>,
         arena: &'a Bump,
-    ) -> Result<()> {
+    ) -> Result<&'a DataValue<'a>> {
         // Call the appropriate lazy operator function
         let result = match op_type {
             // Logic operators
@@ -296,32 +306,34 @@ impl<'a> InstructionStack<'a> {
             }
         };
 
-        // Push the result onto the value stack
-        self.values.push(result);
-
-        Ok(())
+        Ok(result)
     }
 
     /// Collects array items from the value stack
-    fn collect_array(&mut self, count: usize, arena: &'a Bump) -> Result<()> {
-        if self.values.len() < count {
+    fn collect_array(
+        &mut self,
+        values: &mut BumpVec<&'a DataValue<'a>>,
+        count: usize,
+        arena: &'a Bump,
+    ) -> Result<()> {
+        if values.len() < count {
             return Err(datavalue_rs::Error::Custom(format!(
                 "Not enough values on stack for array: need {}, have {}",
                 count,
-                self.values.len()
+                values.len()
             )));
         }
 
         // Get the array items from the stack
-        let start = self.values.len() - count;
-        let array_items: Vec<_> = self.values.drain(start..).collect();
+        let start = values.len() - count;
+        let array_items: Vec<_> = values.drain(start..).collect();
 
         // Create the array value
         // Convert to the expected DataValue type
         let array_values: Vec<DataValue<'a>> = array_items.iter().map(|&v| v.clone()).collect();
 
         let array = DataValue::Array(arena.alloc_slice_fill_iter(array_values));
-        self.values.push(arena.alloc(array));
+        values.push(arena.alloc(array));
 
         Ok(())
     }
@@ -329,100 +341,58 @@ impl<'a> InstructionStack<'a> {
     /// Collects operator arguments and applies the operator
     fn collect_operator_args(
         &mut self,
+        values: &mut BumpVec<&'a DataValue<'a>>,
         op_type: OperatorType,
         count: usize,
+        data: &'a DataValue<'a>,
         arena: &'a Bump,
     ) -> Result<()> {
-        if self.values.len() < count {
+        if values.len() < count {
             return Err(datavalue_rs::Error::Custom(format!(
                 "Not enough values on stack for operator: need {}, have {}",
                 count,
-                self.values.len()
+                values.len()
             )));
         }
 
         // Get the operator arguments from the stack
-        let start = self.values.len() - count;
-        let arg_refs: Vec<_> = self.values.drain(start..).collect();
+        let start = values.len() - count;
+        let arg_refs: Vec<_> = values.drain(start..).collect();
 
         // Convert references to DataValue objects
         let args: Vec<DataValue<'a>> = arg_refs.iter().map(|&v| v.clone()).collect();
 
         // Apply the operator based on its type
-        match op_type {
-            OperatorType::Add => {
-                let result = arithmetic::evaluate_add(&args, arena)?;
-                self.values.push(result);
-            }
-            OperatorType::Subtract => {
-                let result = arithmetic::evaluate_subtract(&args, arena)?;
-                self.values.push(result);
-            }
-            OperatorType::Multiply => {
-                let result = arithmetic::evaluate_multiply(&args, arena)?;
-                self.values.push(result);
-            }
-            OperatorType::Divide => {
-                let result = arithmetic::evaluate_divide(&args, arena)?;
-                self.values.push(result);
-            }
-            OperatorType::Modulo => {
-                let result = arithmetic::evaluate_modulo(&args, arena)?;
-                self.values.push(result);
-            }
-            OperatorType::Min => {
-                let result = arithmetic::evaluate_min(&args, arena)?;
-                self.values.push(result);
-            }
-            OperatorType::Max => {
-                let result = arithmetic::evaluate_max(&args, arena)?;
-                self.values.push(result);
-            }
-            OperatorType::Abs => {
-                let result = arithmetic::evaluate_abs(&args, arena)?;
-                self.values.push(result);
-            }
-            OperatorType::Ceil => {
-                let result = arithmetic::evaluate_ceil(&args, arena)?;
-                self.values.push(result);
-            }
-            OperatorType::Floor => {
-                let result = arithmetic::evaluate_floor(&args, arena)?;
-                self.values.push(result);
-            }
-            OperatorType::Missing => {
-                // Pass the arguments directly
-                let result = misc::evaluate_missing_args(&args, self.data.unwrap(), arena)?;
-                self.values.push(result);
-            }
-            OperatorType::MissingSome => {
-                // Pass the arguments directly
-                let result = misc::evaluate_missing_some_args(&args, self.data.unwrap(), arena)?;
-                self.values.push(result);
-            }
-            OperatorType::Exists => {
-                // Pass the arguments directly
-                let result = misc::evaluate_exists_args(&args, self.data.unwrap(), arena)?;
-                self.values.push(result);
-            }
-            OperatorType::Substring => {
-                // Pass the arguments directly
-                let result = string::evaluate_substring(&args, arena)?;
-                self.values.push(result);
-            }
+        let result = match op_type {
+            OperatorType::Add => arithmetic::evaluate_add(&args, arena)?,
+            OperatorType::Subtract => arithmetic::evaluate_subtract(&args, arena)?,
+            OperatorType::Multiply => arithmetic::evaluate_multiply(&args, arena)?,
+            OperatorType::Divide => arithmetic::evaluate_divide(&args, arena)?,
+            OperatorType::Modulo => arithmetic::evaluate_modulo(&args, arena)?,
+            OperatorType::Min => arithmetic::evaluate_min(&args, arena)?,
+            OperatorType::Max => arithmetic::evaluate_max(&args, arena)?,
+            OperatorType::Abs => arithmetic::evaluate_abs(&args, arena)?,
+            OperatorType::Ceil => arithmetic::evaluate_ceil(&args, arena)?,
+            OperatorType::Floor => arithmetic::evaluate_floor(&args, arena)?,
+            OperatorType::Missing => misc::evaluate_missing_args(&args, data, arena)?,
+            OperatorType::MissingSome => misc::evaluate_missing_some_args(&args, data, arena)?,
+            OperatorType::Exists => misc::evaluate_exists_args(&args, data, arena)?,
+            OperatorType::Substring => string::evaluate_substring(&args, arena)?,
             _ => {
                 return Err(datavalue_rs::Error::Custom(format!(
                     "Operator {:?} not yet implemented in stack engine",
                     op_type
                 )));
             }
-        }
+        };
 
+        values.push(result);
         Ok(())
     }
 
     fn evaluate_variable(
         &mut self,
+        values: &mut BumpVec<&'a DataValue<'a>>,
         path: &'a DataValue<'a>,
         default: &Option<&'a DataValue<'a>>,
         scope_jump: &Option<usize>,
@@ -432,7 +402,7 @@ impl<'a> InstructionStack<'a> {
         if scope_jump.is_none() {
             match path {
                 DataValue::Array([]) | DataValue::Null => {
-                    self.values.push(data);
+                    values.push(data);
                 }
                 DataValue::Array(items) => {
                     let mut context = Some(data);
@@ -448,31 +418,31 @@ impl<'a> InstructionStack<'a> {
                         }
                     }
                     if let Some(context) = context {
-                        self.values.push(context);
+                        values.push(context);
                     } else if let Some(default) = default {
-                        self.values.push(arena.alloc(default));
+                        values.push(*default);
                     } else {
-                        self.values.push(arena.alloc(DataValue::Null));
+                        values.push(arena.alloc(DataValue::Null));
                     }
                 }
                 DataValue::String(key) => {
                     let value = data.get(key);
                     if let Some(value) = value {
-                        self.values.push(value);
+                        values.push(value);
                     } else if let Some(default) = default {
-                        self.values.push(arena.alloc(default));
+                        values.push(*default);
                     } else {
-                        self.values.push(arena.alloc(DataValue::Null));
+                        values.push(arena.alloc(DataValue::Null));
                     }
                 }
                 DataValue::Number(Number::Integer(i)) => {
                     let value = data.get_index(*i as usize);
                     if let Some(value) = value {
-                        self.values.push(value);
+                        values.push(value);
                     } else if let Some(default) = default {
-                        self.values.push(arena.alloc(default));
+                        values.push(*default);
                     } else {
-                        self.values.push(arena.alloc(DataValue::Null));
+                        values.push(arena.alloc(DataValue::Null));
                     }
                 }
                 _ => {
@@ -498,6 +468,127 @@ impl<'a> InstructionStack<'a> {
 
         // Evaluate the token and return the result
         temp_stack.evaluate(data, arena)
+    }
+
+    /// Generates the instruction stack without executing it
+    ///
+    /// This allows precompilation of the instructions, which can be stored
+    /// and reused multiple times with different data contexts.
+    pub fn compile(&mut self, token: &'a Token<'a>) -> Result<()> {
+        // Clear any existing instructions and add the root token
+        self.instructions.clear();
+        self.instructions.push(Instruction::Evaluate(token));
+
+        // A temporary vector to store the compiled instructions in correct order
+        let mut compiled_instructions = Vec::new();
+
+        // Process tokens until we have a complete instruction set
+        while let Some(instruction) = self.instructions.pop() {
+            match instruction {
+                Instruction::Evaluate(token) => {
+                    // For evaluation instructions, we need to process the token
+                    // to build up the instruction stack
+                    match token {
+                        Token::Literal(_) => {
+                            // Literals just become a single instruction
+                            compiled_instructions.push(instruction);
+                        }
+
+                        Token::ArrayLiteral(_) => {
+                            // Array literals also become a single instruction
+                            compiled_instructions.push(instruction);
+                        }
+
+                        Token::Operator { op_type, args } => {
+                            match op_type.evaluation_strategy() {
+                                EvaluationStrategy::Eager => {
+                                    match &**args {
+                                        Token::ArrayLiteral(items) => {
+                                            let count = items.len();
+                                            // Add operator and all items as separate instructions
+                                            compiled_instructions.push(
+                                                Instruction::CollectOperatorArgs(*op_type, count),
+                                            );
+                                            compiled_instructions.push(instruction);
+                                        }
+                                        Token::Array(items) => {
+                                            let count = items.len();
+                                            // Add operator and instructions to evaluate all items
+                                            compiled_instructions.push(
+                                                Instruction::CollectOperatorArgs(*op_type, count),
+                                            );
+                                            for item in items.iter() {
+                                                compiled_instructions
+                                                    .push(Instruction::Evaluate(item));
+                                            }
+                                        }
+                                        _ => {
+                                            compiled_instructions.push(
+                                                Instruction::CollectOperatorArgs(*op_type, 1),
+                                            );
+                                            compiled_instructions.push(Instruction::Evaluate(args));
+                                        }
+                                    }
+                                }
+                                EvaluationStrategy::Lazy => {
+                                    // For lazy operators, add special instruction
+                                    compiled_instructions
+                                        .push(Instruction::EvaluateLazyOperator(*op_type, args));
+                                }
+                                EvaluationStrategy::Predicate => match &**args {
+                                    Token::Array(items) => {
+                                        let count = items.len();
+                                        compiled_instructions.push(
+                                            Instruction::CollectOperatorArgs(*op_type, count),
+                                        );
+                                        for item in items.iter() {
+                                            compiled_instructions.push(Instruction::Evaluate(item));
+                                        }
+                                    }
+                                    _ => {
+                                        return Err(datavalue_rs::Error::Custom(
+                                            "Operator requires an array of arguments".to_string(),
+                                        ));
+                                    }
+                                },
+                            }
+                        }
+
+                        Token::Array(items) => {
+                            let count = items.len();
+                            compiled_instructions.push(Instruction::CollectArray(count));
+                            for item in items.iter() {
+                                compiled_instructions.push(Instruction::Evaluate(item));
+                            }
+                        }
+
+                        Token::Variable { .. } => {
+                            compiled_instructions.push(instruction);
+                        }
+
+                        Token::DynamicVariable { .. } => {
+                            compiled_instructions.push(instruction);
+                        }
+
+                        Token::CustomOperator { .. } => {
+                            compiled_instructions.push(instruction);
+                        }
+                    }
+                }
+
+                // For other instruction types, add them directly
+                _ => compiled_instructions.push(instruction),
+            }
+        }
+
+        // Now we have all the compiled instructions; we need to reverse them
+        // as they will be executed in LIFO order
+        compiled_instructions.reverse();
+
+        // Store the compiled instructions
+        self.instructions = compiled_instructions;
+
+        Ok(())
     }
 }
 

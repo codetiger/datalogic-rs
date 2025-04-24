@@ -9,7 +9,44 @@ use crate::parser::Token;
 use bumpalo::Bump;
 use datavalue_rs::{DataValue, Result};
 
-pub use stack::InstructionStack;
+pub use stack::{Instruction, InstructionStack};
+
+/// A precompiled JSONLogic rule containing precompiled instructions for efficient evaluation
+#[derive(Debug)]
+pub struct CompiledLogic<'a> {
+    /// The precompiled instructions
+    instructions: Vec<Instruction<'a>>,
+    /// The memory arena
+    arena: &'a Bump,
+}
+
+impl<'a> CompiledLogic<'a> {
+    /// Creates a new CompiledLogic by precompiling a token into an instruction stack
+    pub fn new(token: &'a Token<'a>, arena: &'a Bump) -> Result<Self> {
+        // Create an instruction stack and compile the instructions
+        let mut stack = InstructionStack::new(token);
+        stack.compile(token)?;
+
+        // Store the compiled instructions
+        let instructions = stack.instructions.clone();
+
+        Ok(Self {
+            instructions,
+            arena,
+        })
+    }
+
+    /// Evaluates the precompiled logic against the provided data
+    pub fn apply(&self, data: &'a DataValue<'a>) -> Result<&'a DataValue<'a>> {
+        // Create a new stack with our precompiled instructions
+        let mut stack = InstructionStack {
+            instructions: self.instructions.clone(),
+        };
+
+        // Execute the precompiled instructions
+        stack.evaluate(data, self.arena)
+    }
+}
 
 /// Evaluates a JSONLogic expression using a stack-based approach
 ///
