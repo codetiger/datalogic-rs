@@ -8,6 +8,7 @@ use crate::operators::collection;
 use crate::operators::comparison;
 use crate::operators::logic;
 use crate::operators::misc;
+use crate::operators::string;
 use crate::parser::{EvaluationStrategy, OperatorType, Token};
 use bumpalo::Bump;
 use datavalue_rs::Number;
@@ -274,6 +275,7 @@ impl<'a> InstructionStack<'a> {
             OperatorType::LT => comparison::evaluate_lt(args, data, arena)?,
             OperatorType::GTE => comparison::evaluate_gte(args, data, arena)?,
             OperatorType::LTE => comparison::evaluate_lte(args, data, arena)?,
+            OperatorType::In => comparison::evaluate_in(args, data, arena)?,
 
             // Collection operators
             OperatorType::Filter => collection::evaluate_filter(args, data, arena)?,
@@ -281,6 +283,9 @@ impl<'a> InstructionStack<'a> {
             OperatorType::All => collection::evaluate_all(args, data, arena)?,
             OperatorType::Some => collection::evaluate_some(args, data, arena)?,
             OperatorType::None => collection::evaluate_none(args, data, arena)?,
+            OperatorType::Merge => collection::evaluate_merge(args, data, arena)?,
+            OperatorType::Cat => collection::evaluate_cat(args, data, arena)?,
+            OperatorType::Reduce => collection::evaluate_reduce(args, data, arena)?,
 
             // For other lazy operators that might be implemented later
             _ => {
@@ -398,6 +403,11 @@ impl<'a> InstructionStack<'a> {
             OperatorType::Exists => {
                 // Pass the arguments directly
                 let result = misc::evaluate_exists_args(&args, self.data.unwrap(), arena)?;
+                self.values.push(result);
+            }
+            OperatorType::Substring => {
+                // Pass the arguments directly
+                let result = string::evaluate_substring(&args, arena)?;
                 self.values.push(result);
             }
             _ => {

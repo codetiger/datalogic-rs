@@ -257,6 +257,78 @@ pub fn evaluate_lte<'a>(
     Ok(arena.alloc(DataValue::Bool(true)))
 }
 
+/// Evaluates an 'in' operation to check if a value is in an array or a substring is in a string
+///
+/// # Arguments
+///
+/// * `args` - The token containing the arguments (value to check, array or string to search in)
+/// * `data` - The data context
+/// * `arena` - The arena allocator
+///
+/// # Returns
+///
+/// True if the value is found in the array or if the substring is found in the string
+pub fn evaluate_in<'a>(
+    args: &'a Token<'a>,
+    data: &'a DataValue<'a>,
+    arena: &'a Bump,
+) -> Result<&'a DataValue<'a>> {
+    let values = get_arg_values(args, data, arena)?;
+
+    if values.len() < 2 {
+        return Ok(arena.alloc(DataValue::Bool(false))); // Need at least two values
+    }
+
+    let needle = values[0];
+    let haystack = values[1];
+
+    // Check if searching in a string
+    if let DataValue::String(haystack_str) = haystack {
+        // Convert needle to string if it's not already
+        let needle_str = match needle {
+            DataValue::String(s) => s,
+            DataValue::Number(Number::Integer(i)) => {
+                return Ok(arena.alloc(DataValue::Bool(haystack_str.contains(&i.to_string()))))
+            }
+            DataValue::Number(Number::Float(f)) => {
+                return Ok(arena.alloc(DataValue::Bool(haystack_str.contains(&f.to_string()))))
+            }
+            DataValue::Bool(b) => {
+                let s = if *b { "true" } else { "false" };
+                return Ok(arena.alloc(DataValue::Bool(haystack_str.contains(s))));
+            }
+            DataValue::Null => {
+                return Ok(arena.alloc(DataValue::Bool(haystack_str.contains("null"))))
+            }
+            DataValue::DateTime(dt) => {
+                return Ok(arena.alloc(DataValue::Bool(haystack_str.contains(&dt.to_string()))))
+            }
+            DataValue::Duration(d) => {
+                return Ok(arena.alloc(DataValue::Bool(haystack_str.contains(&d.to_string()))))
+            }
+            DataValue::Array(_) | DataValue::Object(_) => {
+                return Ok(arena.alloc(DataValue::Bool(false))); // Complex types can't be in strings
+            }
+        };
+
+        return Ok(arena.alloc(DataValue::Bool(haystack_str.contains(needle_str))));
+    }
+
+    // Check if searching in an array
+    if let DataValue::Array(items) = haystack {
+        for item in items.iter() {
+            // Use loose equality to check if the needle is in the array
+            if loose_equals(needle, item) {
+                return Ok(arena.alloc(DataValue::Bool(true)));
+            }
+        }
+        return Ok(arena.alloc(DataValue::Bool(false)));
+    }
+
+    // If haystack is neither a string nor an array, return false
+    Ok(arena.alloc(DataValue::Bool(false)))
+}
+
 /// Helper function to extract argument values
 fn get_arg_values<'a>(
     args: &'a Token<'a>,

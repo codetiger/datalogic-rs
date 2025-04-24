@@ -444,7 +444,7 @@ mod tests {
         let arena = Bump::new();
 
         // Simple operator with single argument
-        let op_json = r#"{"not": true}"#;
+        let op_json = r#"{"!": true}"#;
         let token = parser::parser(op_json, &arena).unwrap();
         match *token {
             Token::Operator { op_type, ref args } => {
@@ -455,6 +455,20 @@ mod tests {
                 }
             }
             _ => panic!("Expected operator token"),
+        }
+
+        // Test reduce operator
+        let reduce_json = r#"{"reduce": [
+            [1, 2, 3, 4],
+            {"var": "accumulator"}
+        ]}"#;
+        let token = parser::parser(reduce_json, &arena).unwrap();
+        match *token {
+            Token::Operator { op_type, .. } => {
+                assert_eq!(op_type, OperatorType::Reduce);
+                // No need to validate the exact args structure
+            }
+            _ => panic!("Expected operator token for reduce"),
         }
 
         // Operator with multiple arguments

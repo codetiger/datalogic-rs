@@ -31,17 +31,33 @@ pub fn evaluate_missing_args<'a>(
 
     let mut missing_keys = Vec::new();
 
-    // First argument should be an array of required keys
-    for key in args.iter() {
-        match key {
+    // Process args, which could be individual keys or nested arrays of keys
+    for arg in args.iter() {
+        match arg {
             DataValue::String(key_str) => {
                 if !data.key_exists(key_str) {
-                    missing_keys.push(key.clone());
+                    missing_keys.push(arg.clone());
+                }
+            }
+            DataValue::Array(keys) => {
+                // Handle the case where we have an array of keys (e.g., from merge operator)
+                for key in keys.iter() {
+                    match key {
+                        DataValue::String(key_str) => {
+                            if !data.key_exists(key_str) {
+                                missing_keys.push(key.clone());
+                            }
+                        }
+                        _ => {
+                            // If the key is not a string, treat as missing
+                            missing_keys.push(key.clone());
+                        }
+                    }
                 }
             }
             _ => {
-                // If the key is not a string, treat as missing
-                missing_keys.push(key.clone());
+                // If the key is not a string or array, treat as missing
+                missing_keys.push(arg.clone());
             }
         }
     }
@@ -67,52 +83,94 @@ pub fn evaluate_missing_some_args<'a>(
 ) -> Result<&'a DataValue<'a>> {
     if args.len() < 2 {
         return Err(datavalue_rs::Error::Custom(
-            "missing_some requires at least 2 arguments: min_needed and keys".to_string(),
+            "missing_some operator requires at least 2 arguments".to_string(),
         ));
     }
 
-    // First argument is the minimum number needed
-    let min_needed = match &args[0] {
-        DataValue::Number(Number::Integer(i)) => *i as usize,
+    // First argument should be an integer with the minimum number of required keys
+    let min_required = match &args[0] {
+        DataValue::Number(n) => match n {
+            Number::Integer(i) => Ok(*i),
+            Number::Float(f) => {
+                if f.fract() == 0.0 {
+                    Ok(*f as i64)
+                } else {
+                    Err(datavalue_rs::Error::Custom(
+                        "missing_some minimum must be an integer".to_string(),
+                    ))
+                }
+            }
+        }?,
         _ => {
             return Err(datavalue_rs::Error::Custom(
-                "First argument to missing_some must be a number".to_string(),
+                "missing_some minimum must be a number".to_string(),
             ));
         }
     };
 
-    // Second argument is the array of keys to check
-    let mut missing_keys = Vec::new();
-    let mut found_count = 0;
+    // Second argument should be keys to check
+    let keys_arg = &args[1];
 
-    if let DataValue::Array(keys) = &args[1] {
-        for key in keys.iter() {
-            match key {
-                DataValue::String(key_str) => {
-                    if data.key_exists(key_str) {
-                        found_count += 1;
-                    } else {
+    // Collect all keys to check, handling potential nested arrays
+    let mut keys = Vec::new();
+    let mut missing_keys = Vec::new();
+
+    match keys_arg {
+        DataValue::Array(key_array) => {
+            // Process each key or nested array of keys
+            for key in key_array.iter() {
+                match key {
+                    DataValue::String(key_str) => {
+                        keys.push(key);
+                        if !data.key_exists(key_str) {
+                            missing_keys.push(key.clone());
+                        }
+                    }
+                    DataValue::Array(nested_keys) => {
+                        // Handle nested arrays (e.g., from merge operator)
+                        for nested_key in nested_keys.iter() {
+                            match nested_key {
+                                DataValue::String(nested_key_str) => {
+                                    keys.push(nested_key);
+                                    if !data.key_exists(nested_key_str) {
+                                        missing_keys.push(nested_key.clone());
+                                    }
+                                }
+                                _ => {
+                                    // Non-string keys are considered missing
+                                    keys.push(nested_key);
+                                    missing_keys.push(nested_key.clone());
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        // Non-string keys are considered missing
+                        keys.push(key);
                         missing_keys.push(key.clone());
                     }
                 }
-                _ => {
-                    // If the key is not a string, treat as missing
-                    missing_keys.push(key.clone());
-                }
             }
         }
-    } else {
-        return Err(datavalue_rs::Error::Custom(
-            "Second argument to missing_some must be an array of keys".to_string(),
-        ));
+        _ => {
+            return Err(datavalue_rs::Error::Custom(
+                "missing_some second argument must be an array".to_string(),
+            ));
+        }
     }
 
-    // If we have at least the minimum needed, return an empty array
-    if found_count >= min_needed {
-        Ok(arena.alloc(DataValue::Array(&[])))
-    } else {
-        Ok(arena.alloc(DataValue::Array(arena.alloc_slice_fill_iter(missing_keys))))
+    // Check if enough keys are present
+    let total_keys = keys.len() as i64;
+    let missing_count = missing_keys.len() as i64;
+    let present_count = total_keys - missing_count;
+
+    if present_count >= min_required {
+        // Enough keys are present, return empty array
+        return Ok(arena.alloc(DataValue::Array(&[])));
     }
+
+    // Not enough keys are present, return missing keys
+    Ok(arena.alloc(DataValue::Array(arena.alloc_slice_fill_iter(missing_keys))))
 }
 
 /// Evaluates the "exists" operator using direct arguments instead of a token

@@ -70,17 +70,18 @@ pub enum OperatorType {
     Val,         // Evaluate a value
     Exists,      // Check if a variable exists
 
-    Map,    // Map an array
-    Filter, // Filter an array
-    Reduce, // Reduce an array
-    All,    // Check if all items in an array match a condition
-    Some,   // Check if some items in an array match a condition
-    None,   // Check if no items in an array match a condition
-    Merge,  // Merge arrays
-    In,     // Check if a value is in an array
-    Cat,    // Concatenate strings
-    Log,    // Log a value (for debugging)
-    Custom, // Custom operator
+    Map,       // Map an array
+    Filter,    // Filter an array
+    Reduce,    // Reduce an array
+    All,       // Check if all items in an array match a condition
+    Some,      // Check if some items in an array match a condition
+    None,      // Check if no items in an array match a condition
+    Merge,     // Merge arrays
+    In,        // Check if a value is in an array
+    Cat,       // Concatenate strings
+    Substring, // Extract a portion of a string
+    Log,       // Log a value (for debugging)
+    Custom,    // Custom operator
 }
 
 /// Determines how an operator's arguments should be evaluated
@@ -119,7 +120,9 @@ impl OperatorType {
             | OperatorType::Reduce
             | OperatorType::All
             | OperatorType::Some
-            | OperatorType::None => EvaluationStrategy::Lazy,
+            | OperatorType::None
+            | OperatorType::Merge
+            | OperatorType::Cat => EvaluationStrategy::Lazy,
 
             // Comparison operators
             OperatorType::Equal
@@ -129,7 +132,11 @@ impl OperatorType {
             | OperatorType::GT
             | OperatorType::GTE
             | OperatorType::LT
-            | OperatorType::LTE => EvaluationStrategy::Lazy,
+            | OperatorType::LTE
+            | OperatorType::In => EvaluationStrategy::Lazy,
+
+            // String operations
+            OperatorType::Substring => EvaluationStrategy::Eager,
 
             // Default for arithmetic and most other operators - eager evaluation
             _ => EvaluationStrategy::Eager,
@@ -189,6 +196,7 @@ impl FromStr for OperatorType {
             "merge" => Ok(OperatorType::Merge),
             "in" => Ok(OperatorType::In),
             "cat" => Ok(OperatorType::Cat),
+            "substr" => Ok(OperatorType::Substring),
             "log" => Ok(OperatorType::Log),
             _ => Err(ParserError::OperatorNotFoundError {
                 operator: s.to_string(),
@@ -245,6 +253,7 @@ impl fmt::Display for OperatorType {
             OperatorType::Merge => "merge",
             OperatorType::In => "in",
             OperatorType::Cat => "cat",
+            OperatorType::Substring => "substr",
             OperatorType::Log => "log",
             OperatorType::Custom => "custom",
         };
