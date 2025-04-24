@@ -384,8 +384,6 @@ impl<'a> InstructionStack<'a> {
             OperatorType::If => logic::evaluate_if(args, data, arena)?,
             OperatorType::And => logic::evaluate_and(args, data, arena)?,
             OperatorType::Or => logic::evaluate_or(args, data, arena)?,
-            OperatorType::Not => logic::evaluate_not(args, data, arena)?,
-            OperatorType::DoubleBang => logic::evaluate_double_bang(args, data, arena)?,
             OperatorType::NullCoalesce => logic::evaluate_null_coalesce(args, data, arena)?,
 
             // Comparison operators
@@ -407,9 +405,10 @@ impl<'a> InstructionStack<'a> {
             OperatorType::All => collection::evaluate_all(args, data, arena)?,
             OperatorType::Some => collection::evaluate_some(args, data, arena)?,
             OperatorType::None => collection::evaluate_none(args, data, arena)?,
+            OperatorType::Reduce => collection::evaluate_reduce(args, data, arena)?,
+
             OperatorType::Merge => collection::evaluate_merge(args, data, arena)?,
             OperatorType::Cat => collection::evaluate_cat(args, data, arena)?,
-            OperatorType::Reduce => collection::evaluate_reduce(args, data, arena)?,
 
             // For other lazy operators that might be implemented later
             _ => {
@@ -492,6 +491,8 @@ impl<'a> InstructionStack<'a> {
             OperatorType::MissingSome => misc::evaluate_missing_some_args(&args, data, arena)?,
             OperatorType::Exists => misc::evaluate_exists_args(&args, data, arena)?,
             OperatorType::Substring => string::evaluate_substring(&args, arena)?,
+            OperatorType::Not => logic::evaluate_not(&args, arena)?,
+            OperatorType::DoubleBang => logic::evaluate_double_bang(&args, arena)?,
             _ => {
                 return Err(datavalue_rs::Error::Custom(format!(
                     "Operator {:?} not yet implemented in stack engine",

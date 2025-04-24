@@ -105,9 +105,10 @@ impl OperatorType {
             OperatorType::If
             | OperatorType::And
             | OperatorType::Or
-            | OperatorType::Not
-            | OperatorType::DoubleBang
             | OperatorType::NullCoalesce => EvaluationStrategy::Lazy,
+            
+            // Not and DoubleBang now use eager evaluation
+            OperatorType::Not | OperatorType::DoubleBang => EvaluationStrategy::Eager,
 
             // Variables and data access operations
             OperatorType::Missing | OperatorType::MissingSome | OperatorType::Exists => {

@@ -234,14 +234,16 @@ pub fn evaluate_or<'a>(
 ///
 /// The result of the NOT operation
 pub fn evaluate_not<'a>(
-    args: &'a Token<'a>,
-    data: &'a DataValue<'a>,
+    values: &[DataValue<'a>],
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
-    let value = evaluate(args, data, arena)?;
-    match value {
-        DataValue::Array(values) => Ok(arena.alloc(helpers::boolean(!values[0].is_truthy()))),
-        _ => Ok(arena.alloc(helpers::boolean(!value.is_truthy()))),
+    match values {
+        [] => Ok(arena.alloc(helpers::boolean(true))),
+        [DataValue::Array([value])] => Ok(arena.alloc(helpers::boolean(!value.is_truthy()))),
+        [value] => Ok(arena.alloc(helpers::boolean(!value.is_truthy()))),
+        _ => Err(datavalue_rs::Error::Custom(
+            "Not operator requires exactly one argument".to_string(),
+        )),
     }
 }
 
@@ -257,14 +259,16 @@ pub fn evaluate_not<'a>(
 ///
 /// The result of the double negation operation
 pub fn evaluate_double_bang<'a>(
-    args: &'a Token<'a>,
-    data: &'a DataValue<'a>,
+    values: &[DataValue<'a>],
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
-    let value = evaluate(args, data, arena)?;
-    match value {
-        DataValue::Array(values) => Ok(arena.alloc(helpers::boolean(values[0].is_truthy()))),
-        _ => Ok(arena.alloc(helpers::boolean(value.is_truthy()))),
+    match values {
+        [] => Ok(arena.alloc(helpers::boolean(false))),
+        [DataValue::Array([value])] => Ok(arena.alloc(helpers::boolean(value.is_truthy()))),
+        [value] => Ok(arena.alloc(helpers::boolean(value.is_truthy()))),
+        _ => Err(datavalue_rs::Error::Custom(
+            "DoubleBang operator requires exactly one argument".to_string(),
+        )),
     }
 }
 
