@@ -371,8 +371,9 @@ pub fn parser<'a>(input: &str, arena: &'a Bump) -> Result<&'a Token<'a>> {
 
 /// Parse a DataValue into a JSONLogic Token
 pub fn parser_value<'a>(input: &DataValue<'a>, arena: &'a Bump) -> Result<&'a Token<'a>> {
-    let token = jsonlogic::parse_datavalue_internal(input, arena)?;
-    Ok(arena.alloc(token))
+    let token = arena.alloc(jsonlogic::parse_datavalue_internal(input, arena)?);
+    let optimized_token = optimizer::optimize(token, arena);
+    Ok(optimized_token)
 }
 
 pub fn optimize_token<'a>(token: &'a Token<'a>, arena: &'a Bump) -> Result<&'a Token<'a>> {

@@ -5,7 +5,7 @@
 
 mod stack;
 
-use crate::{optimizer, parser::Token};
+use crate::parser::Token;
 use bumpalo::Bump;
 use datavalue_rs::{DataValue, Result};
 
@@ -24,10 +24,8 @@ impl<'a> Logic<'a> {
     /// Creates a new Logic by precompiling a token into an instruction stack
     pub fn new(token: &'a Token<'a>, arena: &'a Bump) -> Result<Self> {
         // Create an instruction stack and compile the instructions
-        let optimized_token = optimizer::optimize(token, arena);
-
-        let mut instruction_stack = InstructionStack::new(optimized_token);
-        instruction_stack.compile(optimized_token)?;
+        let mut instruction_stack = InstructionStack::new(token);
+        instruction_stack.compile(token)?;
 
         Ok(Self {
             instruction_stack: arena.alloc(instruction_stack),
