@@ -9,7 +9,7 @@ fn main() {
     let arena = Bump::new();
 
     // Example 1: Simple Addition Rule
-    let addition_rule = r#"{"+":[1, 2, 3]}"#;
+    let addition_rule = r#"{"+":[1, 2, {"var": "x"}]}"#;
     println!("Example 1: {}", addition_rule);
 
     // Parse the rule and create an instruction stack

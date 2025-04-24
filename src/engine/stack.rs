@@ -29,6 +29,9 @@ pub enum Instruction<'a> {
 
     /// Evaluate a lazy operator with its raw arguments token
     EvaluateLazyOperator(OperatorType, &'a Token<'a>),
+    
+    /// Create an array directly from literal values (optimization)
+    CreateArray(&'a [DataValue<'a>]),
 }
 
 /// A stack of instructions for evaluating JSONLogic expressions
@@ -72,9 +75,9 @@ impl<'a> InstructionStack<'a> {
                             compiled_instructions.push(instruction);
                         }
 
-                        Token::ArrayLiteral(_) => {
-                            // Array literals also become a single instruction
-                            compiled_instructions.push(instruction);
+                        Token::ArrayLiteral(items) => {
+                            // Optimization: directly create array instead of pushing items + collecting
+                            compiled_instructions.push(Instruction::CreateArray(items));
                         }
 
                         Token::Operator { op_type, args } => {
@@ -193,6 +196,12 @@ impl<'a> InstructionStack<'a> {
                     let result = self.evaluate_lazy_operator(*op_type, args, data, arena)?;
                     values.push(result);
                 }
+                Instruction::CreateArray(items) => {
+                    // Optimization: create array directly from literal values
+                    let array_values: Vec<DataValue<'a>> = items.iter().map(|v| v.clone()).collect();
+                    let array = DataValue::Array(arena.alloc_slice_fill_iter(array_values));
+                    values.push(arena.alloc(array));
+                }
             }
         }
 
@@ -222,12 +231,10 @@ impl<'a> InstructionStack<'a> {
             }
 
             Token::ArrayLiteral(items) => {
-                // Push all items directly onto the stack
-                for item in items {
-                    values.push(item);
-                }
-                // Collect these items into an array
-                self.collect_array(values, items.len(), arena)?;
+                // Optimization: create array directly rather than pushing items and collecting
+                let array_values: Vec<DataValue<'a>> = items.iter().map(|v| v.clone()).collect();
+                let array = DataValue::Array(arena.alloc_slice_fill_iter(array_values));
+                values.push(arena.alloc(array));
             }
 
             // For operators, handle based on the type and evaluation strategy
