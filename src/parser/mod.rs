@@ -92,9 +92,6 @@ pub enum EvaluationStrategy {
 
     /// Pass raw arguments to operator function to control evaluation (lazy evaluation)
     Lazy,
-
-    /// Evaluate arguments and use them in a predicate function
-    Predicate,
 }
 
 impl OperatorType {
@@ -106,7 +103,7 @@ impl OperatorType {
             | OperatorType::And
             | OperatorType::Or
             | OperatorType::NullCoalesce => EvaluationStrategy::Lazy,
-            
+
             // Not and DoubleBang now use eager evaluation
             OperatorType::Not | OperatorType::DoubleBang => EvaluationStrategy::Eager,
 

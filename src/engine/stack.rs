@@ -29,7 +29,7 @@ pub enum Instruction<'a> {
 
     /// Evaluate a lazy operator with its raw arguments token
     EvaluateLazyOperator(OperatorType, &'a Token<'a>),
-    
+
     /// Create an array directly from literal values (optimization)
     CreateArray(&'a [DataValue<'a>]),
 }
@@ -117,22 +117,6 @@ impl<'a> InstructionStack<'a> {
                                     compiled_instructions
                                         .push(Instruction::EvaluateLazyOperator(*op_type, args));
                                 }
-                                EvaluationStrategy::Predicate => match &**args {
-                                    Token::Array(items) => {
-                                        let count = items.len();
-                                        compiled_instructions.push(
-                                            Instruction::CollectOperatorArgs(*op_type, count),
-                                        );
-                                        for item in items.iter() {
-                                            compiled_instructions.push(Instruction::Evaluate(item));
-                                        }
-                                    }
-                                    _ => {
-                                        return Err(datavalue_rs::Error::Custom(
-                                            "Operator requires an array of arguments".to_string(),
-                                        ));
-                                    }
-                                },
                             }
                         }
 
@@ -198,7 +182,7 @@ impl<'a> InstructionStack<'a> {
                 }
                 Instruction::CreateArray(items) => {
                     // Optimization: create array directly from literal values
-                    let array_values: Vec<DataValue<'a>> = items.iter().map(|v| v.clone()).collect();
+                    let array_values: Vec<DataValue<'a>> = items.to_vec();
                     let array = DataValue::Array(arena.alloc_slice_fill_iter(array_values));
                     values.push(arena.alloc(array));
                 }
@@ -232,7 +216,7 @@ impl<'a> InstructionStack<'a> {
 
             Token::ArrayLiteral(items) => {
                 // Optimization: create array directly rather than pushing items and collecting
-                let array_values: Vec<DataValue<'a>> = items.iter().map(|v| v.clone()).collect();
+                let array_values: Vec<DataValue<'a>> = items.to_vec();
                 let array = DataValue::Array(arena.alloc_slice_fill_iter(array_values));
                 values.push(arena.alloc(array));
             }
@@ -281,28 +265,6 @@ impl<'a> InstructionStack<'a> {
                         // For lazy operators, evaluate them directly
                         let result = self.evaluate_lazy_operator(*op_type, args, data, arena)?;
                         values.push(result);
-                    }
-                    EvaluationStrategy::Predicate => {
-                        // For predicate operators, handle each item
-                        match &**args {
-                            Token::Array(items) => {
-                                for item in items {
-                                    self.process_token(values, item, data, arena)?;
-                                }
-                                self.collect_operator_args(
-                                    values,
-                                    *op_type,
-                                    items.len(),
-                                    data,
-                                    arena,
-                                )?;
-                            }
-                            _ => {
-                                return Err(datavalue_rs::Error::Custom(
-                                    "Operator requires an array of arguments".to_string(),
-                                ));
-                            }
-                        }
                     }
                 }
             }

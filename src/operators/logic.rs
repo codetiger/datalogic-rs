@@ -233,10 +233,7 @@ pub fn evaluate_or<'a>(
 /// # Returns
 ///
 /// The result of the NOT operation
-pub fn evaluate_not<'a>(
-    values: &[DataValue<'a>],
-    arena: &'a Bump,
-) -> Result<&'a DataValue<'a>> {
+pub fn evaluate_not<'a>(values: &[DataValue<'a>], arena: &'a Bump) -> Result<&'a DataValue<'a>> {
     match values {
         [] => Ok(arena.alloc(helpers::boolean(true))),
         [DataValue::Array([value])] => Ok(arena.alloc(helpers::boolean(!value.is_truthy()))),

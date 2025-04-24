@@ -7,6 +7,7 @@ use bumpalo::Bump;
 use datavalue_rs::{helpers, DataValue, Error, Number, Result};
 
 use crate::{evaluate, DataValueExt, Token};
+use bumpalo::collections::Vec as BumpVec;
 
 /// Evaluates a filter operation on an array
 ///
@@ -39,12 +40,10 @@ pub fn evaluate_filter<'a>(
             // Get the predicate
             let predicate = &tokens[1];
 
-            // Create a new array to hold the filtered elements
-            let mut filtered = Vec::new();
-
             // Apply the predicate to each element if it's an array
             // If not an array, treat it as an empty array (return [])
             if let DataValue::Array(items) = array {
+                let mut filtered = BumpVec::with_capacity_in(items.len(), arena);
                 for item in items.iter() {
                     // Evaluate the predicate with this context
                     let result = evaluate(predicate, item, arena)?;
@@ -54,11 +53,11 @@ pub fn evaluate_filter<'a>(
                         filtered.push(item.clone());
                     }
                 }
+                Ok(arena.alloc(DataValue::Array(arena.alloc(filtered))))
+            } else {
+                // For non-array values (including null), return an empty array
+                Ok(arena.alloc(DataValue::Array(&[])))
             }
-            // For non-array values (including null), return an empty array
-
-            // Allocate the result array in the arena
-            Ok(arena.alloc(DataValue::Array(arena.alloc(filtered))))
         }
         _ => Err(Error::Custom(
             "Filter operator requires array of arguments".to_string(),
@@ -97,22 +96,20 @@ pub fn evaluate_map<'a>(
             // Get the mapping function
             let mapping_fn = &tokens[1];
 
-            // Create a new array to hold the mapped elements
-            let mut mapped = Vec::new();
-
             // Apply the function to each element if it's an array
             // If not an array, treat it as an empty array (return [])
             if let DataValue::Array(items) = array {
+                let mut mapped = BumpVec::with_capacity_in(items.len(), arena);
                 for item in items.iter() {
                     // Evaluate the mapping function with this context
                     let result = evaluate(mapping_fn, item, arena)?;
                     mapped.push(result.clone());
                 }
+                Ok(arena.alloc(DataValue::Array(arena.alloc(mapped))))
+            } else {
+                // For non-array values (including null), return an empty array
+                Ok(arena.alloc(DataValue::Array(&[])))
             }
-            // For non-array values (including null), return an empty array
-
-            // Allocate the result array in the arena
-            Ok(arena.alloc(DataValue::Array(arena.alloc(mapped))))
         }
         _ => Err(Error::Custom(
             "Map operator requires array of arguments".to_string(),
@@ -403,7 +400,7 @@ pub fn evaluate_merge<'a>(
             }
 
             // First collect all the evaluated values
-            let mut values = Vec::new();
+            let mut values = BumpVec::new_in(arena);
             for token in tokens {
                 let value = evaluate(token, data, arena)?;
                 values.push(value);
@@ -413,7 +410,7 @@ pub fn evaluate_merge<'a>(
             let mut all_strings = true;
 
             // Prepare the merged items
-            let mut merged_items = Vec::new();
+            let mut merged_items = BumpVec::new_in(arena);
 
             // Process each value
             for value in values {
@@ -458,7 +455,7 @@ pub fn evaluate_merge<'a>(
 
             match args {
                 DataValue::Array(items) => {
-                    let mut merged_items = Vec::new();
+                    let mut merged_items = BumpVec::with_capacity_in(items.len(), arena);
                     for item in items.iter() {
                         merged_items.push(item.clone());
                     }
