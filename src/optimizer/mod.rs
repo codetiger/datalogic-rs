@@ -60,13 +60,13 @@ fn deep_clone<'a>(token: &Token<'a>) -> Token<'a> {
 /// # Returns
 ///
 /// A new, optimized token
-pub fn optimize<'a>(token: &'a Token<'a>, arena: &'a Bump) -> Box<Token<'a>> {
+pub fn optimize<'a>(token: &'a Token<'a>, arena: &'a Bump) -> &'a Token<'a> {
     if token.is_static_token() {
         // For static tokens, we can try to evaluate them right away and return a literal
         if let Ok(result) = evaluate(token, &DataValue::Null, arena) {
-            return Box::new(Token::Literal(result.clone()));
+            return arena.alloc(Token::Literal(result.clone()));
         }
     }
 
-    Box::new(deep_clone(token))
+    arena.alloc(deep_clone(token))
 }

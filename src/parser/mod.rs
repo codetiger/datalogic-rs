@@ -375,7 +375,7 @@ pub fn parser_value<'a>(input: &DataValue<'a>, arena: &'a Bump) -> Result<&'a To
     Ok(arena.alloc(token))
 }
 
-pub fn optimize_token<'a>(token: &'a Token<'a>, arena: &'a Bump) -> Result<Box<Token<'a>>> {
+pub fn optimize_token<'a>(token: &'a Token<'a>, arena: &'a Bump) -> Result<&'a Token<'a>> {
     let optimized = optimizer::optimize(token, arena);
     Ok(optimized)
 }
