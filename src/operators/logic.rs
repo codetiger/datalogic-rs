@@ -240,12 +240,8 @@ pub fn evaluate_not<'a>(
 ) -> Result<&'a DataValue<'a>> {
     let value = evaluate(args, data, arena)?;
     match value {
-        DataValue::Array(values) => {
-            Ok(arena.alloc(helpers::boolean(!values[0].is_truthy())))
-        }
-        _ => {
-            Ok(arena.alloc(helpers::boolean(!value.is_truthy())))
-        }
+        DataValue::Array(values) => Ok(arena.alloc(helpers::boolean(!values[0].is_truthy()))),
+        _ => Ok(arena.alloc(helpers::boolean(!value.is_truthy()))),
     }
 }
 
@@ -267,12 +263,8 @@ pub fn evaluate_double_bang<'a>(
 ) -> Result<&'a DataValue<'a>> {
     let value = evaluate(args, data, arena)?;
     match value {
-        DataValue::Array(values) => {
-            Ok(arena.alloc(helpers::boolean(values[0].is_truthy())))
-        }
-        _ => {
-            Ok(arena.alloc(helpers::boolean(value.is_truthy())))
-        }
+        DataValue::Array(values) => Ok(arena.alloc(helpers::boolean(values[0].is_truthy()))),
+        _ => Ok(arena.alloc(helpers::boolean(value.is_truthy()))),
     }
 }
 
@@ -316,4 +308,3 @@ pub fn evaluate_null_coalesce<'a>(
         }
     }
 }
-

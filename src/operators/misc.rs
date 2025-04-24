@@ -137,7 +137,7 @@ pub fn evaluate_exists_args<'a>(
 
     // Get the variable path to check
     let var_path = &args[0];
-    
+
     match var_path {
         DataValue::String(path) => {
             // Check if the path exists in data
@@ -147,7 +147,7 @@ pub fn evaluate_exists_args<'a>(
         DataValue::Array(path_parts) => {
             // For array paths, traverse the data
             let mut current = Some(data);
-            
+
             for part in path_parts.iter() {
                 match part {
                     DataValue::String(key) => {
@@ -163,12 +163,12 @@ pub fn evaluate_exists_args<'a>(
                         ));
                     }
                 }
-                
+
                 if current.is_none() {
                     break;
                 }
             }
-            
+
             Ok(arena.alloc(DataValue::Bool(current.is_some())))
         }
         _ => Ok(arena.alloc(DataValue::Bool(false))),
@@ -216,7 +216,12 @@ mod tests {
         let data_str = r#"["a", "b", "c", "d"]"#;
         let required_keys = DataValue::from_str(&arena, data_str).unwrap();
 
-        let result = evaluate_missing_some_args(&[DataValue::Number(Number::Integer(3)), required_keys.clone()], &data, &arena).unwrap();
+        let result = evaluate_missing_some_args(
+            &[DataValue::Number(Number::Integer(3)), required_keys.clone()],
+            &data,
+            &arena,
+        )
+        .unwrap();
 
         // Should return ["b", "d"] because we only found 2 keys but needed 3
         if let DataValue::Array(missing) = result {
@@ -227,7 +232,12 @@ mod tests {
             panic!("Expected array result");
         }
 
-        let result = evaluate_missing_some_args(&[DataValue::Number(Number::Integer(2)), required_keys.clone()], &data, &arena).unwrap();
+        let result = evaluate_missing_some_args(
+            &[DataValue::Number(Number::Integer(2)), required_keys.clone()],
+            &data,
+            &arena,
+        )
+        .unwrap();
 
         // Should return [] because we found 2 keys and needed 2
         if let DataValue::Array(missing) = result {

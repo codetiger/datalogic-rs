@@ -4,6 +4,7 @@
 //! non-recursive evaluation of JSONLogic expressions.
 
 use crate::operators::arithmetic;
+use crate::operators::collection;
 use crate::operators::comparison;
 use crate::operators::logic;
 use crate::operators::misc;
@@ -199,36 +200,37 @@ impl<'a> InstructionStack<'a> {
                 self.evaluate_variable(path, default, scope_jump, data, arena)?;
             }
 
-            Token::DynamicVariable { 
+            Token::DynamicVariable {
                 path_expr,
                 default,
                 scope_jump,
             } => {
                 // First evaluate the path expression to get the actual path
                 let path_value = self.evaluate_token(path_expr, data, arena)?;
-                
+
                 // For a dynamic variable, evaluate the default expression if provided
                 let evaluated_default = match default {
                     Some(def_expr) => {
                         let def_value = self.evaluate_token(def_expr, data, arena)?;
                         Some(def_value)
-                    },
+                    }
                     None => None,
                 };
-                
+
                 // Convert string paths like "pie.filling" to a proper path array
                 let path = match path_value {
                     DataValue::String(s) if s.contains('.') => {
                         // Split the string by dots and create a path array
                         let parts: Vec<&str> = s.split('.').collect();
-                        let path_parts: Vec<DataValue> = parts.into_iter()
+                        let path_parts: Vec<DataValue> = parts
+                            .into_iter()
                             .map(|part| DataValue::String(arena.alloc_str(part)))
                             .collect();
                         arena.alloc(DataValue::Array(arena.alloc_slice_fill_iter(path_parts)))
-                    },
+                    }
                     _ => path_value,
                 };
-                
+
                 // Then handle it like a regular variable
                 self.evaluate_variable(path, &evaluated_default, scope_jump, data, arena)?;
             }
@@ -253,6 +255,7 @@ impl<'a> InstructionStack<'a> {
     ) -> Result<()> {
         // Call the appropriate lazy operator function
         let result = match op_type {
+            // Logic operators
             OperatorType::If => logic::evaluate_if(args, data, arena)?,
             OperatorType::And => logic::evaluate_and(args, data, arena)?,
             OperatorType::Or => logic::evaluate_or(args, data, arena)?,
@@ -260,6 +263,7 @@ impl<'a> InstructionStack<'a> {
             OperatorType::DoubleBang => logic::evaluate_double_bang(args, data, arena)?,
             OperatorType::NullCoalesce => logic::evaluate_null_coalesce(args, data, arena)?,
 
+            // Comparison operators
             OperatorType::Equal => comparison::evaluate_equal(args, data, arena)?,
             OperatorType::StrictEqual => comparison::evaluate_strict_equal(args, data, arena)?,
             OperatorType::NotEqual => comparison::evaluate_not_equal(args, data, arena)?,
@@ -270,7 +274,14 @@ impl<'a> InstructionStack<'a> {
             OperatorType::LT => comparison::evaluate_lt(args, data, arena)?,
             OperatorType::GTE => comparison::evaluate_gte(args, data, arena)?,
             OperatorType::LTE => comparison::evaluate_lte(args, data, arena)?,
-            
+
+            // Collection operators
+            OperatorType::Filter => collection::evaluate_filter(args, data, arena)?,
+            OperatorType::Map => collection::evaluate_map(args, data, arena)?,
+            OperatorType::All => collection::evaluate_all(args, data, arena)?,
+            OperatorType::Some => collection::evaluate_some(args, data, arena)?,
+            OperatorType::None => collection::evaluate_none(args, data, arena)?,
+
             // For other lazy operators that might be implemented later
             _ => {
                 return Err(datavalue_rs::Error::Custom(format!(
@@ -376,26 +387,17 @@ impl<'a> InstructionStack<'a> {
             }
             OperatorType::Missing => {
                 // Pass the arguments directly
-                let result = match misc::evaluate_missing_args(&args, self.data.unwrap(), arena) {
-                    Ok(r) => r,
-                    Err(e) => return Err(e),
-                };
+                let result = misc::evaluate_missing_args(&args, self.data.unwrap(), arena)?;
                 self.values.push(result);
             }
             OperatorType::MissingSome => {
                 // Pass the arguments directly
-                let result = match misc::evaluate_missing_some_args(&args, self.data.unwrap(), arena) {
-                    Ok(r) => r,
-                    Err(e) => return Err(e),
-                };
+                let result = misc::evaluate_missing_some_args(&args, self.data.unwrap(), arena)?;
                 self.values.push(result);
             }
             OperatorType::Exists => {
                 // Pass the arguments directly
-                let result = match misc::evaluate_exists_args(&args, self.data.unwrap(), arena) {
-                    Ok(r) => r,
-                    Err(e) => return Err(e),
-                };
+                let result = misc::evaluate_exists_args(&args, self.data.unwrap(), arena)?;
                 self.values.push(result);
             }
             _ => {
@@ -409,7 +411,14 @@ impl<'a> InstructionStack<'a> {
         Ok(())
     }
 
-    fn evaluate_variable(&mut self, path: &'a DataValue<'a>, default: &Option<&'a DataValue<'a>>, scope_jump: &Option<usize>, data: &'a DataValue<'a>, arena: &'a Bump) -> Result<()> {
+    fn evaluate_variable(
+        &mut self,
+        path: &'a DataValue<'a>,
+        default: &Option<&'a DataValue<'a>>,
+        scope_jump: &Option<usize>,
+        data: &'a DataValue<'a>,
+        arena: &'a Bump,
+    ) -> Result<()> {
         if scope_jump.is_none() {
             match path {
                 DataValue::Array([]) | DataValue::Null => {
@@ -423,9 +432,7 @@ impl<'a> InstructionStack<'a> {
                                 context = context.unwrap_or(&DataValue::Null).get(key)
                             }
                             DataValue::Number(Number::Integer(i)) => {
-                                context = context
-                                    .unwrap_or(&DataValue::Null)
-                                    .get_index(*i as usize)
+                                context = context.unwrap_or(&DataValue::Null).get_index(*i as usize)
                             }
                             _ => unreachable!(),
                         }
@@ -478,7 +485,7 @@ impl<'a> InstructionStack<'a> {
     ) -> Result<&'a DataValue<'a>> {
         // Create a temporary instruction stack to evaluate the token
         let mut temp_stack = InstructionStack::new(token);
-        
+
         // Evaluate the token and return the result
         temp_stack.evaluate(data, arena)
     }

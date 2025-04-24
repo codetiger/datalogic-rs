@@ -56,12 +56,12 @@ pub enum OperatorType {
     LTE,            // <=
 
     // Logic operators
-    If,             // if (conditional)
-    And,            // && (logical AND)
-    Or,             // || (logical OR)
-    Not,            // ! (logical NOT)
-    DoubleBang,     // !! (double negation)
-    NullCoalesce,   // ?? (null coalescing)
+    If,           // if (conditional)
+    And,          // && (logical AND)
+    Or,           // || (logical OR)
+    Not,          // ! (logical NOT)
+    DoubleBang,   // !! (double negation)
+    NullCoalesce, // ?? (null coalescing)
 
     // Special operators
     Var,         // Variable access
@@ -70,17 +70,17 @@ pub enum OperatorType {
     Val,         // Evaluate a value
     Exists,      // Check if a variable exists
 
-    Map,         // Map an array
-    Filter,      // Filter an array
-    Reduce,      // Reduce an array
-    All,         // Check if all items in an array match a condition
-    Some,        // Check if some items in an array match a condition
-    None,        // Check if no items in an array match a condition
-    Merge,       // Merge arrays
-    In,          // Check if a value is in an array
-    Cat,         // Concatenate strings
-    Log,         // Log a value (for debugging)
-    Custom,      // Custom operator
+    Map,    // Map an array
+    Filter, // Filter an array
+    Reduce, // Reduce an array
+    All,    // Check if all items in an array match a condition
+    Some,   // Check if some items in an array match a condition
+    None,   // Check if no items in an array match a condition
+    Merge,  // Merge arrays
+    In,     // Check if a value is in an array
+    Cat,    // Concatenate strings
+    Log,    // Log a value (for debugging)
+    Custom, // Custom operator
 }
 
 /// Determines how an operator's arguments should be evaluated
@@ -109,9 +109,9 @@ impl OperatorType {
             | OperatorType::NullCoalesce => EvaluationStrategy::Lazy,
 
             // Variables and data access operations
-            OperatorType::Missing
-            | OperatorType::MissingSome
-            | OperatorType::Exists => EvaluationStrategy::Eager,
+            OperatorType::Missing | OperatorType::MissingSome | OperatorType::Exists => {
+                EvaluationStrategy::Eager
+            }
 
             // Array operations that might need special evaluation
             OperatorType::Map
