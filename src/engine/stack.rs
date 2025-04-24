@@ -45,6 +45,131 @@ impl<'a> InstructionStack<'a> {
         Self { instructions }
     }
 
+    /// Generates the instruction stack without executing it
+    ///
+    /// This allows precompilation of the instructions, which can be stored
+    /// and reused multiple times with different data contexts.
+    pub fn compile(&mut self, token: &'a Token<'a>) -> Result<()> {
+        // Clear any existing instructions and add the root token
+        self.instructions.clear();
+        self.instructions.push(Instruction::Evaluate(token));
+
+        // A temporary vector to store the compiled instructions in correct order
+        let mut compiled_instructions = Vec::new();
+        let mut stack_index = self.instructions.len();
+
+        // Process tokens until we have a complete instruction set
+        while stack_index > 0 {
+            let instruction = self.instructions[stack_index - 1].clone();
+            stack_index -= 1;
+            match instruction {
+                Instruction::Evaluate(token) => {
+                    // For evaluation instructions, we need to process the token
+                    // to build up the instruction stack
+                    match token {
+                        Token::Literal(_) => {
+                            // Literals just become a single instruction
+                            compiled_instructions.push(instruction);
+                        }
+
+                        Token::ArrayLiteral(_) => {
+                            // Array literals also become a single instruction
+                            compiled_instructions.push(instruction);
+                        }
+
+                        Token::Operator { op_type, args } => {
+                            // Ensure all operators use their evaluation strategy without exceptions
+                            match op_type.evaluation_strategy() {
+                                EvaluationStrategy::Eager => {
+                                    match &**args {
+                                        Token::ArrayLiteral(items) => {
+                                            let count = items.len();
+                                            // Add operator and all items as separate instructions
+                                            compiled_instructions.push(
+                                                Instruction::CollectOperatorArgs(*op_type, count),
+                                            );
+                                            compiled_instructions.push(instruction);
+                                        }
+                                        Token::Array(items) => {
+                                            let count = items.len();
+                                            // Add operator and instructions to evaluate all items
+                                            compiled_instructions.push(
+                                                Instruction::CollectOperatorArgs(*op_type, count),
+                                            );
+                                            for item in items.iter() {
+                                                compiled_instructions
+                                                    .push(Instruction::Evaluate(item));
+                                            }
+                                        }
+                                        _ => {
+                                            compiled_instructions.push(
+                                                Instruction::CollectOperatorArgs(*op_type, 1),
+                                            );
+                                            compiled_instructions.push(Instruction::Evaluate(args));
+                                        }
+                                    }
+                                }
+                                EvaluationStrategy::Lazy => {
+                                    // For lazy operators, add special instruction
+                                    compiled_instructions
+                                        .push(Instruction::EvaluateLazyOperator(*op_type, args));
+                                }
+                                EvaluationStrategy::Predicate => match &**args {
+                                    Token::Array(items) => {
+                                        let count = items.len();
+                                        compiled_instructions.push(
+                                            Instruction::CollectOperatorArgs(*op_type, count),
+                                        );
+                                        for item in items.iter() {
+                                            compiled_instructions.push(Instruction::Evaluate(item));
+                                        }
+                                    }
+                                    _ => {
+                                        return Err(datavalue_rs::Error::Custom(
+                                            "Operator requires an array of arguments".to_string(),
+                                        ));
+                                    }
+                                },
+                            }
+                        }
+
+                        Token::Array(items) => {
+                            let count = items.len();
+                            compiled_instructions.push(Instruction::CollectArray(count));
+                            for item in items.iter() {
+                                compiled_instructions.push(Instruction::Evaluate(item));
+                            }
+                        }
+
+                        Token::Variable { .. } => {
+                            compiled_instructions.push(instruction);
+                        }
+
+                        Token::DynamicVariable { .. } => {
+                            compiled_instructions.push(instruction);
+                        }
+
+                        Token::CustomOperator { .. } => {
+                            compiled_instructions.push(instruction);
+                        }
+                    }
+                }
+
+                // For other instruction types, add them directly
+                _ => compiled_instructions.push(instruction),
+            }
+        }
+
+        // Now we have all the compiled instructions; we need to reverse them
+        // as they will be executed in LIFO order
+        compiled_instructions.reverse();
+
+        // Store the compiled instructions
+        self.instructions = compiled_instructions.into_iter().collect();
+
+        Ok(())
+    }
+
     /// Evaluates the instruction stack
     pub fn evaluate(&self, data: &'a DataValue<'a>, arena: &'a Bump) -> Result<&'a DataValue<'a>> {
         let mut values = BumpVec::new_in(arena);
@@ -450,131 +575,6 @@ impl<'a> InstructionStack<'a> {
 
         // Evaluate the token and return the result
         temp_stack.evaluate(data, arena)
-    }
-
-    /// Generates the instruction stack without executing it
-    ///
-    /// This allows precompilation of the instructions, which can be stored
-    /// and reused multiple times with different data contexts.
-    pub fn compile(&mut self, token: &'a Token<'a>) -> Result<()> {
-        // Clear any existing instructions and add the root token
-        self.instructions.clear();
-        self.instructions.push(Instruction::Evaluate(token));
-
-        // A temporary vector to store the compiled instructions in correct order
-        let mut compiled_instructions = Vec::new();
-        let mut stack_index = self.instructions.len();
-
-        // Process tokens until we have a complete instruction set
-        while stack_index > 0 {
-            let instruction = self.instructions[stack_index - 1].clone();
-            stack_index -= 1;
-            match instruction {
-                Instruction::Evaluate(token) => {
-                    // For evaluation instructions, we need to process the token
-                    // to build up the instruction stack
-                    match token {
-                        Token::Literal(_) => {
-                            // Literals just become a single instruction
-                            compiled_instructions.push(instruction);
-                        }
-
-                        Token::ArrayLiteral(_) => {
-                            // Array literals also become a single instruction
-                            compiled_instructions.push(instruction);
-                        }
-
-                        Token::Operator { op_type, args } => {
-                            // Ensure all operators use their evaluation strategy without exceptions
-                            match op_type.evaluation_strategy() {
-                                EvaluationStrategy::Eager => {
-                                    match &**args {
-                                        Token::ArrayLiteral(items) => {
-                                            let count = items.len();
-                                            // Add operator and all items as separate instructions
-                                            compiled_instructions.push(
-                                                Instruction::CollectOperatorArgs(*op_type, count),
-                                            );
-                                            compiled_instructions.push(instruction);
-                                        }
-                                        Token::Array(items) => {
-                                            let count = items.len();
-                                            // Add operator and instructions to evaluate all items
-                                            compiled_instructions.push(
-                                                Instruction::CollectOperatorArgs(*op_type, count),
-                                            );
-                                            for item in items.iter() {
-                                                compiled_instructions
-                                                    .push(Instruction::Evaluate(item));
-                                            }
-                                        }
-                                        _ => {
-                                            compiled_instructions.push(
-                                                Instruction::CollectOperatorArgs(*op_type, 1),
-                                            );
-                                            compiled_instructions.push(Instruction::Evaluate(args));
-                                        }
-                                    }
-                                }
-                                EvaluationStrategy::Lazy => {
-                                    // For lazy operators, add special instruction
-                                    compiled_instructions
-                                        .push(Instruction::EvaluateLazyOperator(*op_type, args));
-                                }
-                                EvaluationStrategy::Predicate => match &**args {
-                                    Token::Array(items) => {
-                                        let count = items.len();
-                                        compiled_instructions.push(
-                                            Instruction::CollectOperatorArgs(*op_type, count),
-                                        );
-                                        for item in items.iter() {
-                                            compiled_instructions.push(Instruction::Evaluate(item));
-                                        }
-                                    }
-                                    _ => {
-                                        return Err(datavalue_rs::Error::Custom(
-                                            "Operator requires an array of arguments".to_string(),
-                                        ));
-                                    }
-                                },
-                            }
-                        }
-
-                        Token::Array(items) => {
-                            let count = items.len();
-                            compiled_instructions.push(Instruction::CollectArray(count));
-                            for item in items.iter() {
-                                compiled_instructions.push(Instruction::Evaluate(item));
-                            }
-                        }
-
-                        Token::Variable { .. } => {
-                            compiled_instructions.push(instruction);
-                        }
-
-                        Token::DynamicVariable { .. } => {
-                            compiled_instructions.push(instruction);
-                        }
-
-                        Token::CustomOperator { .. } => {
-                            compiled_instructions.push(instruction);
-                        }
-                    }
-                }
-
-                // For other instruction types, add them directly
-                _ => compiled_instructions.push(instruction),
-            }
-        }
-
-        // Now we have all the compiled instructions; we need to reverse them
-        // as they will be executed in LIFO order
-        compiled_instructions.reverse();
-
-        // Store the compiled instructions
-        self.instructions = compiled_instructions.into_iter().collect();
-
-        Ok(())
     }
 }
 
