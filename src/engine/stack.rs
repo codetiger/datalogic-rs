@@ -32,6 +32,7 @@ pub enum Instruction<'a> {
 }
 
 /// A stack of instructions for evaluating JSONLogic expressions
+#[derive(Debug)]
 pub struct InstructionStack<'a> {
     pub instructions: Vec<Instruction<'a>>,
 }
@@ -45,27 +46,26 @@ impl<'a> InstructionStack<'a> {
     }
 
     /// Evaluates the instruction stack
-    pub fn evaluate(
-        &mut self,
-        data: &'a DataValue<'a>,
-        arena: &'a Bump,
-    ) -> Result<&'a DataValue<'a>> {
+    pub fn evaluate(&self, data: &'a DataValue<'a>, arena: &'a Bump) -> Result<&'a DataValue<'a>> {
         let mut values = BumpVec::new_in(arena);
+        let mut stack_index = self.instructions.len();
 
         // Continue processing instructions until the stack is empty
-        while let Some(instruction) = self.instructions.pop() {
+        while stack_index > 0 {
+            let instruction = &self.instructions[stack_index - 1];
+            stack_index -= 1;
             match instruction {
                 Instruction::Evaluate(token) => {
                     self.process_token(&mut values, token, data, arena)?;
                 }
                 Instruction::CollectArray(count) => {
-                    self.collect_array(&mut values, count, arena)?;
+                    self.collect_array(&mut values, *count, arena)?;
                 }
                 Instruction::CollectOperatorArgs(op_type, count) => {
-                    self.collect_operator_args(&mut values, op_type, count, data, arena)?;
+                    self.collect_operator_args(&mut values, *op_type, *count, data, arena)?;
                 }
                 Instruction::EvaluateLazyOperator(op_type, args) => {
-                    let result = self.evaluate_lazy_operator(op_type, args, data, arena)?;
+                    let result = self.evaluate_lazy_operator(*op_type, args, data, arena)?;
                     values.push(result);
                 }
             }
@@ -84,7 +84,7 @@ impl<'a> InstructionStack<'a> {
 
     /// Processes a token and adds appropriate values to the stack
     fn process_token(
-        &mut self,
+        &self,
         values: &mut BumpVec<&'a DataValue<'a>>,
         token: &'a Token<'a>,
         data: &'a DataValue<'a>,
@@ -107,24 +107,6 @@ impl<'a> InstructionStack<'a> {
 
             // For operators, handle based on the type and evaluation strategy
             Token::Operator { op_type, args } => {
-                // Special handling for missing operator
-                if *op_type == OperatorType::Missing {
-                    let mut new_values = BumpVec::new_in(arena);
-                    self.process_token(&mut new_values, args, data, arena)?;
-                    let args_array = if new_values.len() == 1 {
-                        // For single value, create an array with it
-                        let arg = new_values[0];
-                        vec![arg.clone()]
-                    } else {
-                        // Already an array of values
-                        new_values.iter().map(|&v| v.clone()).collect()
-                    };
-
-                    let result = misc::evaluate_missing_args(&args_array, data, arena)?;
-                    values.push(result);
-                    return Ok(());
-                }
-
                 // Check the evaluation strategy for this operator
                 match op_type.evaluation_strategy() {
                     EvaluationStrategy::Eager => {
@@ -258,7 +240,7 @@ impl<'a> InstructionStack<'a> {
 
     /// Evaluates a lazy operator with its raw arguments
     fn evaluate_lazy_operator(
-        &mut self,
+        &self,
         op_type: OperatorType,
         args: &'a Token<'a>,
         data: &'a DataValue<'a>,
@@ -311,7 +293,7 @@ impl<'a> InstructionStack<'a> {
 
     /// Collects array items from the value stack
     fn collect_array(
-        &mut self,
+        &self,
         values: &mut BumpVec<&'a DataValue<'a>>,
         count: usize,
         arena: &'a Bump,
@@ -340,7 +322,7 @@ impl<'a> InstructionStack<'a> {
 
     /// Collects operator arguments and applies the operator
     fn collect_operator_args(
-        &mut self,
+        &self,
         values: &mut BumpVec<&'a DataValue<'a>>,
         op_type: OperatorType,
         count: usize,
@@ -391,7 +373,7 @@ impl<'a> InstructionStack<'a> {
     }
 
     fn evaluate_variable(
-        &mut self,
+        &self,
         values: &mut BumpVec<&'a DataValue<'a>>,
         path: &'a DataValue<'a>,
         default: &Option<&'a DataValue<'a>>,
@@ -458,13 +440,13 @@ impl<'a> InstructionStack<'a> {
 
     /// Evaluates a token and returns its value
     fn evaluate_token(
-        &mut self,
+        &self,
         token: &'a Token<'a>,
         data: &'a DataValue<'a>,
         arena: &'a Bump,
     ) -> Result<&'a DataValue<'a>> {
         // Create a temporary instruction stack to evaluate the token
-        let mut temp_stack = InstructionStack::new(token);
+        let temp_stack = InstructionStack::new(token);
 
         // Evaluate the token and return the result
         temp_stack.evaluate(data, arena)
@@ -481,9 +463,12 @@ impl<'a> InstructionStack<'a> {
 
         // A temporary vector to store the compiled instructions in correct order
         let mut compiled_instructions = Vec::new();
+        let mut stack_index = self.instructions.len();
 
         // Process tokens until we have a complete instruction set
-        while let Some(instruction) = self.instructions.pop() {
+        while stack_index > 0 {
+            let instruction = self.instructions[stack_index - 1].clone();
+            stack_index -= 1;
             match instruction {
                 Instruction::Evaluate(token) => {
                     // For evaluation instructions, we need to process the token
@@ -500,6 +485,7 @@ impl<'a> InstructionStack<'a> {
                         }
 
                         Token::Operator { op_type, args } => {
+                            // Ensure all operators use their evaluation strategy without exceptions
                             match op_type.evaluation_strategy() {
                                 EvaluationStrategy::Eager => {
                                     match &**args {
@@ -586,7 +572,7 @@ impl<'a> InstructionStack<'a> {
         compiled_instructions.reverse();
 
         // Store the compiled instructions
-        self.instructions = compiled_instructions;
+        self.instructions = compiled_instructions.into_iter().collect();
 
         Ok(())
     }
@@ -615,7 +601,7 @@ mod tests {
         };
 
         // Evaluate using our stack-based engine
-        let mut stack = InstructionStack::new(&add_token);
+        let stack = InstructionStack::new(&add_token);
         let result = stack.evaluate(data, &arena).unwrap();
 
         // Check the result
@@ -655,7 +641,7 @@ mod tests {
         };
 
         // Evaluate using our stack-based engine
-        let mut stack = InstructionStack::new(&add_token);
+        let stack = InstructionStack::new(&add_token);
         let result = stack.evaluate(data, &arena).unwrap();
 
         // Check the result
@@ -679,7 +665,7 @@ mod tests {
         };
 
         // Evaluate using our stack-based engine
-        let mut stack = InstructionStack::new(&subtract_token);
+        let stack = InstructionStack::new(&subtract_token);
         let result = stack.evaluate(data, &arena).unwrap();
 
         // Check the result
@@ -702,7 +688,7 @@ mod tests {
         };
 
         // Evaluate using our stack-based engine
-        let mut stack = InstructionStack::new(&multiply_token);
+        let stack = InstructionStack::new(&multiply_token);
         let result = stack.evaluate(data, &arena).unwrap();
 
         // Check the result
@@ -725,7 +711,7 @@ mod tests {
         };
 
         // Evaluate using our stack-based engine
-        let mut stack = InstructionStack::new(&divide_token);
+        let stack = InstructionStack::new(&divide_token);
         let result = stack.evaluate(data, &arena).unwrap();
 
         // Check the result
@@ -747,7 +733,7 @@ mod tests {
         };
 
         // Evaluate using our stack-based engine
-        let mut stack = InstructionStack::new(&modulo_token);
+        let stack = InstructionStack::new(&modulo_token);
         let result = stack.evaluate(data, &arena).unwrap();
 
         // Check the result
@@ -772,7 +758,7 @@ mod tests {
         };
 
         // Evaluate using our stack-based engine
-        let mut stack = InstructionStack::new(&min_token);
+        let stack = InstructionStack::new(&min_token);
         let result = stack.evaluate(data, &arena).unwrap();
 
         // Check the result
@@ -797,7 +783,7 @@ mod tests {
         };
 
         // Evaluate using our stack-based engine
-        let mut stack = InstructionStack::new(&max_token);
+        let stack = InstructionStack::new(&max_token);
         let result = stack.evaluate(data, &arena).unwrap();
 
         // Check the result
@@ -822,7 +808,7 @@ mod tests {
         };
 
         // Evaluate using our stack-based engine
-        let mut stack = InstructionStack::new(&abs_token);
+        let stack = InstructionStack::new(&abs_token);
         let result = stack.evaluate(data, &arena).unwrap();
 
         // Check the result
@@ -858,7 +844,7 @@ mod tests {
         };
 
         // Evaluate using our stack-based engine
-        let mut stack = InstructionStack::new(&ceil_token);
+        let stack = InstructionStack::new(&ceil_token);
         let result = stack.evaluate(data, &arena).unwrap();
 
         // Check the result
@@ -893,7 +879,7 @@ mod tests {
         };
 
         // Evaluate using our stack-based engine
-        let mut stack = InstructionStack::new(&floor_token);
+        let stack = InstructionStack::new(&floor_token);
         let result = stack.evaluate(data, &arena).unwrap();
 
         // Check the result

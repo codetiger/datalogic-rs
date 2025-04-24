@@ -22,7 +22,7 @@ pub use parser::{parser, OperatorType, ParserError, Token};
 pub use optimizer::optimize;
 
 // Re-export engine evaluation function
-pub use engine::{evaluate, CompiledLogic};
+pub use engine::{evaluate, Logic};
 
 use thiserror::Error;
 
@@ -60,39 +60,6 @@ impl Default for DataLogic {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// A precompiled JSONLogic rule that can be evaluated multiple times
-///
-/// # Example
-///
-/// ```
-/// use datalogic_rs::{DataLogic, Logic, DataValue};
-///
-/// // Create a new DataLogic instance
-/// let logic_engine = DataLogic::new();
-///
-/// // Compile a rule once
-/// let rule = r#"{"==":[{"var":"age"}, 21]}"#;
-/// let compiled = logic_engine.compile(rule).unwrap();
-///
-/// // Use the compiled rule multiple times with different data
-/// let data1 = r#"{"age": 21}"#;
-/// let data2 = r#"{"age": 18}"#;
-/// let parsed_data1 = logic_engine.parse_data(data1).unwrap();
-/// let parsed_data2 = logic_engine.parse_data(data2).unwrap();
-///
-/// // Apply the compiled rule
-/// let result1 = logic_engine.apply_logic(&compiled, &parsed_data1).unwrap();
-/// let result2 = logic_engine.apply_logic(&compiled, &parsed_data2).unwrap();
-///
-/// assert_eq!(result1, DataValue::Bool(true));
-/// assert_eq!(result2, DataValue::Bool(false));
-/// ```
-#[derive(Debug)]
-pub struct Logic<'a> {
-    /// The compiled logic with instruction stack
-    compiled: CompiledLogic<'a>,
 }
 
 impl DataLogic {
@@ -144,10 +111,10 @@ impl DataLogic {
         match parser::parser(rule_str, &self.arena) {
             Ok(token) => {
                 // Compile the token into an instruction stack
-                let compiled = CompiledLogic::new(token, &self.arena)
+                let compiled = Logic::new(token, &self.arena)
                     .map_err(|e| LogicError::ParserError(format!("Compilation error: {}", e)))?;
 
-                Ok(Logic { compiled })
+                Ok(compiled)
             }
             Err(e) => Err(LogicError::ParserError(e.to_string())),
         }
@@ -161,8 +128,7 @@ impl DataLogic {
     ) -> Result<DataValue<'a>, LogicError> {
         // Use the precompiled instruction stack for evaluation
         let result = logic
-            .compiled
-            .apply(data)
+            .evaluate(data)
             .map_err(|e| LogicError::EvaluationError(e.to_string()))?;
 
         Ok(result.clone())
@@ -179,11 +145,11 @@ impl DataLogic {
             Ok(token) => {
                 // Instead of creating a Logic struct, create the CompiledLogic directly
                 // and use it for evaluation
-                let compiled = CompiledLogic::new(token, &self.arena)
+                let compiled = Logic::new(token, &self.arena)
                     .map_err(|e| LogicError::ParserError(format!("Compilation error: {}", e)))?;
 
                 let result = compiled
-                    .apply(data)
+                    .evaluate(data)
                     .map_err(|e| LogicError::EvaluationError(e.to_string()))?;
 
                 Ok(result.clone())

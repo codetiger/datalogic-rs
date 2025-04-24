@@ -13,38 +13,30 @@ pub use stack::{Instruction, InstructionStack};
 
 /// A precompiled JSONLogic rule containing precompiled instructions for efficient evaluation
 #[derive(Debug)]
-pub struct CompiledLogic<'a> {
+pub struct Logic<'a> {
     /// The precompiled instructions
-    instructions: Vec<Instruction<'a>>,
+    instruction_stack: &'a InstructionStack<'a>,
     /// The memory arena
     arena: &'a Bump,
 }
 
-impl<'a> CompiledLogic<'a> {
-    /// Creates a new CompiledLogic by precompiling a token into an instruction stack
+impl<'a> Logic<'a> {
+    /// Creates a new Logic by precompiling a token into an instruction stack
     pub fn new(token: &'a Token<'a>, arena: &'a Bump) -> Result<Self> {
         // Create an instruction stack and compile the instructions
-        let mut stack = InstructionStack::new(token);
-        stack.compile(token)?;
-
-        // Store the compiled instructions
-        let instructions = stack.instructions.clone();
+        let mut instruction_stack = InstructionStack::new(token);
+        instruction_stack.compile(token)?;
 
         Ok(Self {
-            instructions,
+            instruction_stack: arena.alloc(instruction_stack),
             arena,
         })
     }
 
     /// Evaluates the precompiled logic against the provided data
-    pub fn apply(&self, data: &'a DataValue<'a>) -> Result<&'a DataValue<'a>> {
-        // Create a new stack with our precompiled instructions
-        let mut stack = InstructionStack {
-            instructions: self.instructions.clone(),
-        };
-
+    pub fn evaluate(&self, data: &'a DataValue<'a>) -> Result<&'a DataValue<'a>> {
         // Execute the precompiled instructions
-        stack.evaluate(data, self.arena)
+        self.instruction_stack.evaluate(data, self.arena)
     }
 }
 
@@ -64,10 +56,8 @@ pub fn evaluate<'a>(
     data: &'a DataValue<'a>,
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
-    let mut stack = InstructionStack::new(token);
+    let stack = InstructionStack::new(token);
 
-    // For now, we're implementing a simplified version that only handles
-    // addition as a proof of concept
     match stack.evaluate(data, arena) {
         Ok(result) => Ok(result),
         Err(e) => Err(e),
