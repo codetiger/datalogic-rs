@@ -3,9 +3,9 @@
 //! This crate provides a fast, memory-efficient implementation of JSONLogic
 //! using DataValue from the datavalue_rs crate.
 
+pub mod core;
 pub mod engine;
 pub mod operators;
-pub mod parser;
 pub mod value;
 
 // Re-export the value extension trait for convenient usage
@@ -15,7 +15,7 @@ pub use value::DataValueExt;
 pub use datavalue_rs::{helpers, Bump as DataBump, DataValue, Number};
 
 // Re-export important parser types
-pub use parser::{parser, ASTNode, OperatorType, ParserError};
+pub use core::{parser, ASTNode, OperatorType, ParserError};
 
 // Re-export engine evaluation function
 pub use engine::{evaluate, Logic};
@@ -76,7 +76,7 @@ impl DataLogic {
             )));
         }
 
-        match parser::parser(rule_str, &self.arena) {
+        match core::parser(rule_str, &self.arena) {
             Ok(token) => Ok((*token).clone()),
             Err(e) => Err(LogicError::ParserError(e.to_string())),
         }
@@ -104,7 +104,7 @@ impl DataLogic {
     ///
     /// Note: The returned Logic instance is valid only for the lifetime of the DataLogic instance.
     pub fn compile(&self, rule_str: &str) -> Result<Logic<'_>, LogicError> {
-        match parser::parser(rule_str, &self.arena) {
+        match core::parser(rule_str, &self.arena) {
             Ok(token) => {
                 // Compile the token into an instruction stack
                 let compiled = Logic::new(token, &self.arena)
@@ -137,7 +137,7 @@ impl DataLogic {
         data: &'a DataValue<'a>,
     ) -> Result<DataValue<'a>, LogicError> {
         // Parse directly and evaluate without storing intermediate token
-        match parser::parser(rule_str, &self.arena) {
+        match core::parser(rule_str, &self.arena) {
             Ok(token) => {
                 // Instead of creating a Logic struct, create the CompiledLogic directly
                 // and use it for evaluation

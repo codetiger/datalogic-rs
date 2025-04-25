@@ -1,6 +1,6 @@
 use bumpalo::Bump;
+use datalogic_rs::core;
 use datalogic_rs::engine::InstructionStack;
-use datalogic_rs::parser;
 
 fn main() {
     println!("=== JSONLogic Instruction Stack Demonstration ===\n");
@@ -13,7 +13,7 @@ fn main() {
     println!("Example 1: {}", addition_rule);
 
     // Parse the rule and create an instruction stack
-    let token = parser::parser(addition_rule, &arena).expect("Failed to parse rule");
+    let token = core::parser(addition_rule, &arena).expect("Failed to parse rule");
     let mut stack = InstructionStack::new(token);
 
     // Print the initial state (uncompiled)
@@ -32,7 +32,7 @@ fn main() {
     println!("Example 2: {}", if_rule);
 
     // Parse and compile
-    let if_token = parser::parser(if_rule, &arena).expect("Failed to parse if rule");
+    let if_token = core::parser(if_rule, &arena).expect("Failed to parse if rule");
     let mut if_stack = InstructionStack::new(if_token);
 
     // Print initial state
@@ -49,7 +49,7 @@ fn main() {
     println!("Example 3: {}", and_rule);
 
     // Parse and compile
-    let and_token = parser::parser(and_rule, &arena).expect("Failed to parse AND rule");
+    let and_token = core::parser(and_rule, &arena).expect("Failed to parse AND rule");
     let mut and_stack = InstructionStack::new(and_token);
 
     // Print initial and compiled states

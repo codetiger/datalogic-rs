@@ -3,13 +3,13 @@
 //! This module provides the stack data structure and operations for
 //! non-recursive evaluation of JSONLogic expressions.
 
+use crate::core::{ASTNode, EvaluationStrategy, OperatorType};
 use crate::operators::arithmetic;
 use crate::operators::collection;
 use crate::operators::comparison;
 use crate::operators::logic;
 use crate::operators::misc;
 use crate::operators::string;
-use crate::parser::{ASTNode, EvaluationStrategy, OperatorType};
 use bumpalo::collections::Vec as BumpVec;
 use bumpalo::Bump;
 use datavalue_rs::Number;
@@ -542,7 +542,7 @@ impl<'a> InstructionStack<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::ASTNode;
+    use crate::core::ASTNode;
     use datavalue_rs::helpers;
 
     #[test]

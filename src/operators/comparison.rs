@@ -5,7 +5,7 @@
 use bumpalo::Bump;
 use datavalue_rs::{DataValue, Number, Result};
 
-use crate::parser::ASTNode;
+use crate::core::ASTNode;
 use crate::value::{loose_equals, strict_equals};
 use crate::{engine, DataValueExt};
 
@@ -362,7 +362,7 @@ fn get_arg_values<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::ASTNode;
+    use crate::core::ASTNode;
 
     #[test]
     fn test_equal() {

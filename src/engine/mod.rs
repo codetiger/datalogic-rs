@@ -5,7 +5,7 @@
 
 mod stack;
 
-use crate::parser::ASTNode;
+use crate::core::ASTNode;
 use bumpalo::Bump;
 use datavalue_rs::{DataValue, Result};
 

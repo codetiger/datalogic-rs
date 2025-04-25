@@ -7,7 +7,7 @@ use std::str::FromStr;
 use bumpalo::Bump;
 use datavalue_rs::{helpers, DataValue, Number};
 
-use crate::parser::{ASTNode, OperatorType, ParserError, Result};
+use crate::core::{ASTNode, OperatorType, ParserError, Result};
 
 /// Internal function for parsing a DataValue into a token.
 pub fn parse_datavalue_internal<'a>(value: &DataValue<'a>, arena: &'a Bump) -> Result<ASTNode<'a>> {
@@ -280,7 +280,7 @@ fn parse_custom_operator<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser;
+    use crate::core;
     use datavalue_rs::Bump;
 
     #[test]
@@ -289,7 +289,7 @@ mod tests {
 
         // Null
         let null_json = r#"null"#;
-        let token = parser::parser(null_json, &arena).unwrap();
+        let token = core::parser(null_json, &arena).unwrap();
         match token {
             ASTNode::Literal(DataValue::Null) => (),
             _ => panic!("Expected null literal"),
@@ -297,7 +297,7 @@ mod tests {
 
         // Boolean
         let bool_json = r#"true"#;
-        let token = parser::parser(bool_json, &arena).unwrap();
+        let token = core::parser(bool_json, &arena).unwrap();
         match token {
             ASTNode::Literal(DataValue::Bool(true)) => (),
             _ => panic!("Expected boolean literal"),
@@ -305,7 +305,7 @@ mod tests {
 
         // Integer
         let int_json = r#"42"#;
-        let token = parser::parser(int_json, &arena).unwrap();
+        let token = core::parser(int_json, &arena).unwrap();
         match token {
             ASTNode::Literal(DataValue::Number(Number::Integer(i))) => assert_eq!(*i, 42),
             _ => panic!("Expected integer literal"),
@@ -313,7 +313,7 @@ mod tests {
 
         // Float
         let float_json = r#"3.14"#;
-        let token = parser::parser(float_json, &arena).unwrap();
+        let token = core::parser(float_json, &arena).unwrap();
         match token {
             ASTNode::Literal(DataValue::Number(Number::Float(f))) => {
                 assert!((*f - 3.14).abs() < f64::EPSILON)
@@ -323,7 +323,7 @@ mod tests {
 
         // String
         let string_json = r#""hello""#;
-        let token = parser::parser(string_json, &arena).unwrap();
+        let token = core::parser(string_json, &arena).unwrap();
         match token {
             ASTNode::Literal(DataValue::String(s)) => assert_eq!(*s, "hello"),
             _ => panic!("Expected string literal"),
@@ -331,7 +331,7 @@ mod tests {
 
         // Array of literals
         let array_json = r#"[1, 2, 3]"#;
-        let token = parser::parser(array_json, &arena).unwrap();
+        let token = core::parser(array_json, &arena).unwrap();
         println!("{:?}", token);
         match token {
             ASTNode::ArrayLiteral(arr) => {
@@ -351,7 +351,7 @@ mod tests {
 
         // Simple variable
         let var_json = r#"{"var": "user.name"}"#;
-        let token = parser::parser(var_json, &arena).unwrap();
+        let token = core::parser(var_json, &arena).unwrap();
         match token {
             ASTNode::Variable {
                 path,
@@ -386,7 +386,7 @@ mod tests {
 
         // Variable with default
         let var_with_default_json = r#"{"var": ["user.name", "Anonymous"]}"#;
-        let token = parser::parser(var_with_default_json, &arena).unwrap();
+        let token = core::parser(var_with_default_json, &arena).unwrap();
         match token {
             ASTNode::Variable {
                 path,
@@ -425,7 +425,7 @@ mod tests {
 
         // Empty path (reference to data itself)
         let empty_var_json = r#"{"var": []}"#;
-        let token = parser::parser(empty_var_json, &arena).unwrap();
+        let token = core::parser(empty_var_json, &arena).unwrap();
         match token {
             ASTNode::Variable {
                 path,
@@ -448,7 +448,7 @@ mod tests {
 
         // Simple operator with single argument
         let op_json = r#"{"!": true}"#;
-        let token = parser::parser(op_json, &arena).unwrap();
+        let token = core::parser(op_json, &arena).unwrap();
         match *token {
             ASTNode::Operator { op_type, ref args } => {
                 assert_eq!(op_type, OperatorType::Not);
@@ -465,7 +465,7 @@ mod tests {
             [1, 2, 3, 4],
             {"var": "accumulator"}
         ]}"#;
-        let token = parser::parser(reduce_json, &arena).unwrap();
+        let token = core::parser(reduce_json, &arena).unwrap();
         match *token {
             ASTNode::Operator { op_type, .. } => {
                 assert_eq!(op_type, OperatorType::Reduce);
@@ -476,7 +476,7 @@ mod tests {
 
         // Operator with multiple arguments
         let op_with_args_json = r#"{"and": [true, false, true]}"#;
-        let token = parser::parser(op_with_args_json, &arena).unwrap();
+        let token = core::parser(op_with_args_json, &arena).unwrap();
         match *token {
             ASTNode::Operator { op_type, ref args } => {
                 assert_eq!(op_type, OperatorType::And);
@@ -510,7 +510,7 @@ mod tests {
             ]
         }
         "#;
-        let token = parser::parser(complex_json, &arena).unwrap();
+        let token = core::parser(complex_json, &arena).unwrap();
 
         // Just verify it parses without error and has the right structure
         match *token {
@@ -528,7 +528,7 @@ mod tests {
         // JSONLogic expression with a custom operator
         let input = r#"{"custom_op": [1, 2, 3]}"#;
 
-        let token = parser::parser(input, &arena).unwrap();
+        let token = core::parser(input, &arena).unwrap();
 
         // Verify the token is a custom operator
         match *token {

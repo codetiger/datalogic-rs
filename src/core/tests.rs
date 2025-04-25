@@ -4,7 +4,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::parser::{parser, ASTNode, OperatorType, ParserError};
+    use crate::core::{parser, ASTNode, OperatorType, ParserError};
     use bumpalo::Bump;
     use datavalue_rs::{helpers, DataValue, Number};
 

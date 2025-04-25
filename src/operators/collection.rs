@@ -566,7 +566,7 @@ pub fn evaluate_reduce<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::{ASTNode, OperatorType};
+    use crate::core::{ASTNode, OperatorType};
     use crate::DataLogic;
     use bumpalo::Bump;
     use datavalue_rs::{DataValue, Number};
