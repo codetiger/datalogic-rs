@@ -5,7 +5,7 @@
 
 mod stack;
 
-use crate::parser::Token;
+use crate::parser::ASTNode;
 use bumpalo::Bump;
 use datavalue_rs::{DataValue, Result};
 
@@ -22,7 +22,7 @@ pub struct Logic<'a> {
 
 impl<'a> Logic<'a> {
     /// Creates a new Logic by precompiling a token into an instruction stack
-    pub fn new(token: &'a Token<'a>, arena: &'a Bump) -> Result<Self> {
+    pub fn new(token: &'a ASTNode<'a>, arena: &'a Bump) -> Result<Self> {
         // Create an instruction stack and compile the instructions
         let mut instruction_stack = InstructionStack::new(token);
         instruction_stack.compile()?;
@@ -52,7 +52,7 @@ impl<'a> Logic<'a> {
 ///
 /// A DataValue containing the result of the evaluation
 pub fn evaluate<'a>(
-    token: &'a Token<'a>,
+    token: &'a ASTNode<'a>,
     data: &'a DataValue<'a>,
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {

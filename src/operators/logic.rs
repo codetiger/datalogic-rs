@@ -6,7 +6,7 @@
 use bumpalo::Bump;
 use datavalue_rs::{helpers, DataValue, Result};
 
-use crate::{evaluate, DataValueExt, Token};
+use crate::{evaluate, ASTNode, DataValueExt};
 
 /// Evaluates an if-then-else operation
 ///
@@ -20,12 +20,12 @@ use crate::{evaluate, DataValueExt, Token};
 ///
 /// The result of evaluating the if expression
 pub fn evaluate_if<'a>(
-    args: &'a Token<'a>,
+    args: &'a ASTNode<'a>,
     data: &'a DataValue<'a>,
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
     match args {
-        Token::Array(tokens) => {
+        ASTNode::Array(tokens) => {
             // If requires at least one argument (the condition)
             if tokens.is_empty() {
                 return Ok(arena.alloc(helpers::null()));
@@ -54,7 +54,7 @@ pub fn evaluate_if<'a>(
             // No conditions matched and no default
             Ok(arena.alloc(helpers::null()))
         }
-        Token::ArrayLiteral(values) => {
+        ASTNode::ArrayLiteral(values) => {
             // If requires at least one argument (the condition)
             if values.is_empty() {
                 return Ok(arena.alloc(helpers::null()));
@@ -98,12 +98,12 @@ pub fn evaluate_if<'a>(
 ///
 /// The result of the AND operation
 pub fn evaluate_and<'a>(
-    args: &'a Token<'a>,
+    args: &'a ASTNode<'a>,
     data: &'a DataValue<'a>,
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
     match args {
-        Token::Array(tokens) => {
+        ASTNode::Array(tokens) => {
             // Empty array returns true (identity element for AND)
             if tokens.is_empty() {
                 return Ok(arena.alloc(helpers::null()));
@@ -126,7 +126,7 @@ pub fn evaluate_and<'a>(
                 Ok(arena.alloc(helpers::null()))
             }
         }
-        Token::ArrayLiteral(values) => {
+        ASTNode::ArrayLiteral(values) => {
             // Empty array returns true (identity element for AND)
             if values.is_empty() {
                 return Ok(arena.alloc(helpers::null()));
@@ -166,12 +166,12 @@ pub fn evaluate_and<'a>(
 ///
 /// The result of the OR operation
 pub fn evaluate_or<'a>(
-    args: &'a Token<'a>,
+    args: &'a ASTNode<'a>,
     data: &'a DataValue<'a>,
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
     match args {
-        Token::Array(tokens) => {
+        ASTNode::Array(tokens) => {
             // Empty array returns false (identity element for OR)
             if tokens.is_empty() {
                 return Ok(arena.alloc(helpers::null()));
@@ -194,7 +194,7 @@ pub fn evaluate_or<'a>(
                 Ok(arena.alloc(helpers::null()))
             }
         }
-        Token::ArrayLiteral(values) => {
+        ASTNode::ArrayLiteral(values) => {
             // Empty array returns false (identity element for OR)
             if values.is_empty() {
                 return Ok(arena.alloc(helpers::null()));
@@ -281,12 +281,12 @@ pub fn evaluate_double_bang<'a>(
 ///
 /// The first non-null value or null if all values are null
 pub fn evaluate_null_coalesce<'a>(
-    args: &'a Token<'a>,
+    args: &'a ASTNode<'a>,
     data: &'a DataValue<'a>,
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
     match args {
-        Token::Array(tokens) => {
+        ASTNode::Array(tokens) => {
             // Empty array case
             if tokens.is_empty() {
                 return Ok(arena.alloc(helpers::null()));

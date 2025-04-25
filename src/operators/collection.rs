@@ -6,7 +6,7 @@
 use bumpalo::Bump;
 use datavalue_rs::{helpers, DataValue, Error, Number, Result};
 
-use crate::{evaluate, DataValueExt, Token};
+use crate::{evaluate, ASTNode, DataValueExt};
 use bumpalo::collections::Vec as BumpVec;
 
 /// Evaluates a filter operation on an array
@@ -21,12 +21,12 @@ use bumpalo::collections::Vec as BumpVec;
 ///
 /// A new array with elements that pass the predicate test
 pub fn evaluate_filter<'a>(
-    args: &'a Token<'a>,
+    args: &'a ASTNode<'a>,
     data: &'a DataValue<'a>,
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
     match args {
-        Token::Array(tokens) => {
+        ASTNode::Array(tokens) => {
             // Filter requires at least two arguments: array and predicate
             if tokens.len() < 2 {
                 return Err(Error::Custom(
@@ -77,12 +77,12 @@ pub fn evaluate_filter<'a>(
 ///
 /// A new array with the mapping function applied to each element
 pub fn evaluate_map<'a>(
-    args: &'a Token<'a>,
+    args: &'a ASTNode<'a>,
     data: &'a DataValue<'a>,
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
     match args {
-        Token::Array(tokens) => {
+        ASTNode::Array(tokens) => {
             // Map requires at least two arguments: array and function
             if tokens.len() < 2 {
                 return Err(Error::Custom(
@@ -129,12 +129,12 @@ pub fn evaluate_map<'a>(
 ///
 /// True if all elements pass the predicate test, false otherwise
 pub fn evaluate_all<'a>(
-    args: &'a Token<'a>,
+    args: &'a ASTNode<'a>,
     data: &'a DataValue<'a>,
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
     match args {
-        Token::Array(tokens) => {
+        ASTNode::Array(tokens) => {
             // All requires at least two arguments: array and predicate
             if tokens.len() < 2 {
                 return Err(Error::Custom(
@@ -190,12 +190,12 @@ pub fn evaluate_all<'a>(
 ///
 /// True if at least one element passes the predicate test, false otherwise
 pub fn evaluate_some<'a>(
-    args: &'a Token<'a>,
+    args: &'a ASTNode<'a>,
     data: &'a DataValue<'a>,
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
     match args {
-        Token::Array(tokens) => {
+        ASTNode::Array(tokens) => {
             // Some requires at least two arguments: array and predicate
             if tokens.len() < 2 {
                 return Err(Error::Custom(
@@ -251,12 +251,12 @@ pub fn evaluate_some<'a>(
 ///
 /// True if no elements pass the predicate test, false otherwise
 pub fn evaluate_none<'a>(
-    args: &'a Token<'a>,
+    args: &'a ASTNode<'a>,
     data: &'a DataValue<'a>,
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
     match args {
-        Token::Array(tokens) => {
+        ASTNode::Array(tokens) => {
             // None requires at least two arguments: array and predicate
             if tokens.len() < 2 {
                 return Err(Error::Custom(
@@ -318,14 +318,14 @@ pub fn evaluate_none<'a>(
 ///
 /// A string concatenation of all arguments
 pub fn evaluate_cat<'a>(
-    args: &'a Token<'a>,
+    args: &'a ASTNode<'a>,
     data: &'a DataValue<'a>,
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
     let mut result = String::new();
 
     match args {
-        Token::Array(tokens) => {
+        ASTNode::Array(tokens) => {
             for token in tokens {
                 let value = evaluate(token, data, arena)?;
                 match value {
@@ -388,12 +388,12 @@ pub fn evaluate_cat<'a>(
 ///
 /// A merged array or concatenated string depending on the input types
 pub fn evaluate_merge<'a>(
-    args: &'a Token<'a>,
+    args: &'a ASTNode<'a>,
     data: &'a DataValue<'a>,
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
     match args {
-        Token::Array(tokens) => {
+        ASTNode::Array(tokens) => {
             if tokens.is_empty() {
                 // Empty arguments, return empty array
                 return Ok(arena.alloc(DataValue::Array(&[])));
@@ -481,12 +481,12 @@ pub fn evaluate_merge<'a>(
 ///
 /// A single value resulting from the reduction operation
 pub fn evaluate_reduce<'a>(
-    args: &'a Token<'a>,
+    args: &'a ASTNode<'a>,
     data: &'a DataValue<'a>,
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
     match args {
-        Token::Array(tokens) => {
+        ASTNode::Array(tokens) => {
             // Reduce requires at least two arguments: array and reducer function
             if tokens.len() < 2 {
                 return Err(Error::Custom(
@@ -566,7 +566,7 @@ pub fn evaluate_reduce<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::{OperatorType, Token};
+    use crate::parser::{ASTNode, OperatorType};
     use crate::DataLogic;
     use bumpalo::Bump;
     use datavalue_rs::{DataValue, Number};
@@ -584,18 +584,18 @@ mod tests {
             DataValue::Number(Number::Integer(4)),
         ];
         let array_data = DataValue::Array(arena.alloc_slice_fill_iter(array_items));
-        let array = Box::new(Token::Literal(array_data.clone()));
+        let array = Box::new(ASTNode::Literal(array_data.clone()));
 
         // Create a simple reducer function that sums elements
-        let reducer_fn = Box::new(Token::Operator {
+        let reducer_fn = Box::new(ASTNode::Operator {
             op_type: OperatorType::Add,
-            args: Box::new(Token::Array(vec![
-                Box::new(Token::Variable {
+            args: Box::new(ASTNode::Array(vec![
+                Box::new(ASTNode::Variable {
                     path: arena.alloc(DataValue::String("accumulator")),
                     default: None,
                     scope_jump: None,
                 }),
-                Box::new(Token::Variable {
+                Box::new(ASTNode::Variable {
                     path: arena.alloc(DataValue::String("current")),
                     default: None,
                     scope_jump: None,
@@ -604,11 +604,11 @@ mod tests {
         });
 
         // Create initial value
-        let initial = Box::new(Token::Literal(DataValue::Number(Number::Integer(0))));
+        let initial = Box::new(ASTNode::Literal(DataValue::Number(Number::Integer(0))));
 
         // Create the arguments array for reduce
         let tokens = vec![array, reducer_fn, initial];
-        let args = Token::Array(tokens);
+        let args = ASTNode::Array(tokens);
 
         // Test manually by calling the evaluate_reduce function
         let result = evaluate_reduce(&args, data, &arena).unwrap();
@@ -630,18 +630,18 @@ mod tests {
             DataValue::Number(Number::Integer(4)),
         ];
         let array_data = DataValue::Array(arena.alloc_slice_fill_iter(array_items));
-        let array = Box::new(Token::Literal(array_data.clone()));
+        let array = Box::new(ASTNode::Literal(array_data.clone()));
 
         // Create a simple reducer function that sums elements
-        let reducer_fn = Box::new(Token::Operator {
+        let reducer_fn = Box::new(ASTNode::Operator {
             op_type: OperatorType::Add,
-            args: Box::new(Token::Array(vec![
-                Box::new(Token::Variable {
+            args: Box::new(ASTNode::Array(vec![
+                Box::new(ASTNode::Variable {
                     path: arena.alloc(DataValue::String("accumulator")),
                     default: None,
                     scope_jump: None,
                 }),
-                Box::new(Token::Variable {
+                Box::new(ASTNode::Variable {
                     path: arena.alloc(DataValue::String("current")),
                     default: None,
                     scope_jump: None,
@@ -651,7 +651,7 @@ mod tests {
 
         // Create the arguments array for reduce
         let tokens = vec![array, reducer_fn];
-        let args = Token::Array(tokens);
+        let args = ASTNode::Array(tokens);
 
         // Test manually by calling the evaluate_reduce function
         let result = evaluate_reduce(&args, data, &arena).unwrap();

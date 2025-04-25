@@ -8,7 +8,7 @@ use std::fmt;
 use std::str::FromStr;
 use thiserror::Error;
 
-use crate::optimizer;
+use crate::evaluate;
 
 mod tests;
 
@@ -259,14 +259,14 @@ impl fmt::Display for OperatorType {
     }
 }
 
-/// Token representing an expression component
+/// ASTNode representing an expression component
 #[derive(Debug, PartialEq, Clone)]
-pub enum Token<'a> {
+pub enum ASTNode<'a> {
     /// A literal value
     Literal(DataValue<'a>),
 
-    /// An array of tokens
-    Array(Vec<Box<Token<'a>>>),
+    /// An array of ASTNodes
+    Array(Vec<Box<ASTNode<'a>>>),
 
     /// An array of literal values
     ArrayLiteral(Vec<DataValue<'a>>),
@@ -280,65 +280,68 @@ pub enum Token<'a> {
 
     /// A dynamic variable reference where the path is computed at runtime
     DynamicVariable {
-        path_expr: Box<Token<'a>>,
-        default: Option<Box<Token<'a>>>,
+        path_expr: Box<ASTNode<'a>>,
+        default: Option<Box<ASTNode<'a>>>,
         scope_jump: Option<usize>,
     },
 
     /// An operator with a name and arguments
     Operator {
         op_type: OperatorType,
-        args: Box<Token<'a>>,
+        args: Box<ASTNode<'a>>,
     },
 
     /// A custom operator with a name and arguments
-    CustomOperator { name: &'a str, args: Box<Token<'a>> },
+    CustomOperator {
+        name: &'a str,
+        args: Box<ASTNode<'a>>,
+    },
 }
 
-impl<'a> Token<'a> {
-    /// Create a new custom operator token
-    pub fn custom_operator(name: &'a str, args: Box<Token<'a>>) -> Self {
-        Token::CustomOperator { name, args }
+impl<'a> ASTNode<'a> {
+    /// Create a new custom operator ASTNode
+    pub fn custom_operator(name: &'a str, args: Box<ASTNode<'a>>) -> Self {
+        ASTNode::CustomOperator { name, args }
     }
 
     pub fn is_operator(&self) -> bool {
-        matches!(self, Token::Operator { .. })
+        matches!(self, ASTNode::Operator { .. })
     }
 
     pub fn is_literal(&self) -> bool {
-        matches!(self, Token::Literal(_))
+        matches!(self, ASTNode::Literal(_))
     }
 
     pub fn is_variable(&self) -> bool {
-        matches!(self, Token::Variable { .. })
+        matches!(self, ASTNode::Variable { .. })
     }
 
     pub fn is_dynamic_variable(&self) -> bool {
-        matches!(self, Token::DynamicVariable { .. })
+        matches!(self, ASTNode::DynamicVariable { .. })
     }
 
     pub fn is_custom_operator(&self) -> bool {
-        matches!(self, Token::CustomOperator { .. })
+        matches!(self, ASTNode::CustomOperator { .. })
     }
 
-    pub fn is_static_token(&self) -> bool {
-        // Static tokens are those that don't require runtime evaluation
+    pub fn is_static(&self) -> bool {
+        // Static ASTNodes are those that don't require runtime evaluation
         match self {
             // Literals are always static
-            Token::Literal(_) => true,
+            ASTNode::Literal(_) => true,
 
             // Array literals are static if all their elements are static
-            Token::ArrayLiteral(_) => true,
+            ASTNode::ArrayLiteral(_) => true,
 
             // Arrays are never static as they can contain dynamic variables
-            Token::Array(items) => items.iter().all(|item| item.is_static_token()),
+            ASTNode::Array(items) => items.iter().all(|item| item.is_static()),
 
             // Variables are never static as they access the context
-            Token::Variable { .. } => false,
-            Token::DynamicVariable { .. } => false,
+            ASTNode::Variable { .. } => false,
+            ASTNode::DynamicVariable { .. } => false,
 
             // Operators are static if they don't access variables and all their arguments are static
-            Token::Operator { op_type, args } => {
+            ASTNode::Operator { op_type, args } => {
                 // These operators access variables directly
                 match op_type {
                     OperatorType::Var
@@ -347,18 +350,18 @@ impl<'a> Token<'a> {
                     | OperatorType::Exists => false,
 
                     // For other operators, check if their arguments are static
-                    _ => args.is_static_token(),
+                    _ => args.is_static(),
                 }
             }
 
             // Custom operators are considered non-static by default
-            Token::CustomOperator { .. } => false,
+            ASTNode::CustomOperator { .. } => false,
         }
     }
 }
 
-/// Parse a JSON string into a JSONLogic Token
-pub fn parser<'a>(input: &str, arena: &'a Bump) -> Result<&'a Token<'a>> {
+/// Parse a JSON string into a JSONLogic ASTNode
+pub fn parser<'a>(input: &str, arena: &'a Bump) -> Result<&'a ASTNode<'a>> {
     let data_value = DataValue::from_str(arena, input).map_err(|e| ParserError::ParserError {
         reason: format!("Invalid JSON: {}", e),
     })?;
@@ -367,14 +370,15 @@ pub fn parser<'a>(input: &str, arena: &'a Bump) -> Result<&'a Token<'a>> {
     parser_value(&data_value, arena)
 }
 
-/// Parse a DataValue into a JSONLogic Token
-pub fn parser_value<'a>(input: &DataValue<'a>, arena: &'a Bump) -> Result<&'a Token<'a>> {
-    let token = arena.alloc(jsonlogic::parse_datavalue_internal(input, arena)?);
-    let optimized_token = optimizer::optimize(token, arena);
-    Ok(optimized_token)
-}
+/// Parse a DataValue into a JSONLogic ASTNode
+pub fn parser_value<'a>(input: &DataValue<'a>, arena: &'a Bump) -> Result<&'a ASTNode<'a>> {
+    let node = arena.alloc(jsonlogic::parse_datavalue_internal(input, arena)?);
+    if node.is_static() {
+        // For static tokens, we can try to evaluate them right away and return a literal
+        if let Ok(result) = evaluate(node, &DataValue::Null, arena) {
+            return Ok(arena.alloc(ASTNode::Literal(result.clone())));
+        }
+    }
 
-pub fn optimize_token<'a>(token: &'a Token<'a>, arena: &'a Bump) -> Result<&'a Token<'a>> {
-    let optimized = optimizer::optimize(token, arena);
-    Ok(optimized)
+    Ok(node)
 }

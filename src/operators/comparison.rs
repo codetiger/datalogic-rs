@@ -5,13 +5,13 @@
 use bumpalo::Bump;
 use datavalue_rs::{DataValue, Number, Result};
 
-use crate::parser::Token;
+use crate::parser::ASTNode;
 use crate::value::{loose_equals, strict_equals};
 use crate::{engine, DataValueExt};
 
 /// Evaluates an equal (==) comparison
 pub fn evaluate_equal<'a>(
-    args: &'a Token<'a>,
+    args: &'a ASTNode<'a>,
     data: &'a DataValue<'a>,
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
@@ -33,7 +33,7 @@ pub fn evaluate_equal<'a>(
 
 /// Evaluates a strict equal (===) comparison
 pub fn evaluate_strict_equal<'a>(
-    args: &'a Token<'a>,
+    args: &'a ASTNode<'a>,
     data: &'a DataValue<'a>,
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
@@ -55,7 +55,7 @@ pub fn evaluate_strict_equal<'a>(
 
 /// Evaluates a not equal (!=) comparison
 pub fn evaluate_not_equal<'a>(
-    args: &'a Token<'a>,
+    args: &'a ASTNode<'a>,
     data: &'a DataValue<'a>,
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
@@ -77,7 +77,7 @@ pub fn evaluate_not_equal<'a>(
 
 /// Evaluates a strict not equal (!==) comparison
 pub fn evaluate_strict_not_equal<'a>(
-    args: &'a Token<'a>,
+    args: &'a ASTNode<'a>,
     data: &'a DataValue<'a>,
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
@@ -99,7 +99,7 @@ pub fn evaluate_strict_not_equal<'a>(
 
 /// Evaluates a greater than (>) comparison
 pub fn evaluate_gt<'a>(
-    args: &'a Token<'a>,
+    args: &'a ASTNode<'a>,
     data: &'a DataValue<'a>,
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
@@ -139,7 +139,7 @@ pub fn evaluate_gt<'a>(
 
 /// Evaluates a less than (<) comparison
 pub fn evaluate_lt<'a>(
-    args: &'a Token<'a>,
+    args: &'a ASTNode<'a>,
     data: &'a DataValue<'a>,
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
@@ -179,7 +179,7 @@ pub fn evaluate_lt<'a>(
 
 /// Evaluates a greater than or equal (>=) comparison
 pub fn evaluate_gte<'a>(
-    args: &'a Token<'a>,
+    args: &'a ASTNode<'a>,
     data: &'a DataValue<'a>,
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
@@ -219,7 +219,7 @@ pub fn evaluate_gte<'a>(
 
 /// Evaluates a less than or equal (<=) comparison
 pub fn evaluate_lte<'a>(
-    args: &'a Token<'a>,
+    args: &'a ASTNode<'a>,
     data: &'a DataValue<'a>,
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
@@ -269,7 +269,7 @@ pub fn evaluate_lte<'a>(
 ///
 /// True if the value is found in the array or if the substring is found in the string
 pub fn evaluate_in<'a>(
-    args: &'a Token<'a>,
+    args: &'a ASTNode<'a>,
     data: &'a DataValue<'a>,
     arena: &'a Bump,
 ) -> Result<&'a DataValue<'a>> {
@@ -331,12 +331,12 @@ pub fn evaluate_in<'a>(
 
 /// Helper function to extract argument values
 fn get_arg_values<'a>(
-    args: &'a Token<'a>,
+    args: &'a ASTNode<'a>,
     data: &'a DataValue<'a>,
     arena: &'a Bump,
 ) -> Result<Vec<&'a DataValue<'a>>> {
     match args {
-        Token::Array(items) => {
+        ASTNode::Array(items) => {
             let mut values = Vec::with_capacity(items.len());
             for item in items {
                 // Fully evaluate each item recursively
@@ -345,8 +345,8 @@ fn get_arg_values<'a>(
             }
             Ok(values)
         }
-        Token::ArrayLiteral(items) => Ok(items.iter().collect()),
-        Token::Operator { .. } => {
+        ASTNode::ArrayLiteral(items) => Ok(items.iter().collect()),
+        ASTNode::Operator { .. } => {
             // If we have a nested operator, evaluate it first
             let value = engine::evaluate(args, data, arena)?;
             Ok(vec![value])
@@ -362,7 +362,7 @@ fn get_arg_values<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::Token;
+    use crate::parser::ASTNode;
 
     #[test]
     fn test_equal() {
@@ -370,7 +370,7 @@ mod tests {
         let data = arena.alloc(DataValue::Null);
 
         // Test equal values: [1, 1, "1"] (all loose equal)
-        let args = Token::ArrayLiteral(vec![
+        let args = ASTNode::ArrayLiteral(vec![
             DataValue::Number(datavalue_rs::Number::Integer(1)),
             DataValue::Number(datavalue_rs::Number::Integer(1)),
             DataValue::String("1"),
@@ -380,7 +380,7 @@ mod tests {
         assert_eq!(*result, DataValue::Bool(true));
 
         // Test unequal values: [1, 2, 3]
-        let args = Token::ArrayLiteral(vec![
+        let args = ASTNode::ArrayLiteral(vec![
             DataValue::Number(datavalue_rs::Number::Integer(1)),
             DataValue::Number(datavalue_rs::Number::Integer(2)),
             DataValue::Number(datavalue_rs::Number::Integer(3)),
@@ -396,7 +396,7 @@ mod tests {
         let data = arena.alloc(DataValue::Null);
 
         // Test strictly equal values: [1, 1, 1]
-        let args = Token::ArrayLiteral(vec![
+        let args = ASTNode::ArrayLiteral(vec![
             DataValue::Number(datavalue_rs::Number::Integer(1)),
             DataValue::Number(datavalue_rs::Number::Integer(1)),
             DataValue::Number(datavalue_rs::Number::Integer(1)),
@@ -406,7 +406,7 @@ mod tests {
         assert_eq!(*result, DataValue::Bool(true));
 
         // Test not strictly equal values: [1, 1, "1"]
-        let args = Token::ArrayLiteral(vec![
+        let args = ASTNode::ArrayLiteral(vec![
             DataValue::Number(datavalue_rs::Number::Integer(1)),
             DataValue::Number(datavalue_rs::Number::Integer(1)),
             DataValue::String("1"),
@@ -422,7 +422,7 @@ mod tests {
         let data = arena.alloc(DataValue::Null);
 
         // Test decreasing sequence: [5, 4, 3, 2, 1]
-        let args = Token::ArrayLiteral(vec![
+        let args = ASTNode::ArrayLiteral(vec![
             DataValue::Number(datavalue_rs::Number::Integer(5)),
             DataValue::Number(datavalue_rs::Number::Integer(4)),
             DataValue::Number(datavalue_rs::Number::Integer(3)),
@@ -434,7 +434,7 @@ mod tests {
         assert_eq!(*result, DataValue::Bool(true));
 
         // Test non-decreasing sequence: [5, 5, 4, 3]
-        let args = Token::ArrayLiteral(vec![
+        let args = ASTNode::ArrayLiteral(vec![
             DataValue::Number(datavalue_rs::Number::Integer(5)),
             DataValue::Number(datavalue_rs::Number::Integer(5)),
             DataValue::Number(datavalue_rs::Number::Integer(4)),
@@ -451,7 +451,7 @@ mod tests {
         let data = arena.alloc(DataValue::Null);
 
         // Test increasing sequence: [1, 2, 3, 4, 5]
-        let args = Token::ArrayLiteral(vec![
+        let args = ASTNode::ArrayLiteral(vec![
             DataValue::Number(datavalue_rs::Number::Integer(1)),
             DataValue::Number(datavalue_rs::Number::Integer(2)),
             DataValue::Number(datavalue_rs::Number::Integer(3)),
@@ -463,7 +463,7 @@ mod tests {
         assert_eq!(*result, DataValue::Bool(true));
 
         // Test non-increasing sequence: [1, 1, 2, 3]
-        let args = Token::ArrayLiteral(vec![
+        let args = ASTNode::ArrayLiteral(vec![
             DataValue::Number(datavalue_rs::Number::Integer(1)),
             DataValue::Number(datavalue_rs::Number::Integer(1)),
             DataValue::Number(datavalue_rs::Number::Integer(2)),

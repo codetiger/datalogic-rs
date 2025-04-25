@@ -5,7 +5,6 @@
 
 pub mod engine;
 pub mod operators;
-pub mod optimizer;
 pub mod parser;
 pub mod value;
 
@@ -16,10 +15,7 @@ pub use value::DataValueExt;
 pub use datavalue_rs::{helpers, Bump as DataBump, DataValue, Number};
 
 // Re-export important parser types
-pub use parser::{parser, OperatorType, ParserError, Token};
-
-// Re-export optimizer functions
-pub use optimizer::optimize;
+pub use parser::{parser, ASTNode, OperatorType, ParserError};
 
 // Re-export engine evaluation function
 pub use engine::{evaluate, Logic};
@@ -71,7 +67,7 @@ impl DataLogic {
     }
 
     /// Parses a logic rule from JSON string
-    pub fn parse_logic(&self, rule_str: &str, format: Option<&str>) -> Result<Token, LogicError> {
+    pub fn parse_logic(&self, rule_str: &str, format: Option<&str>) -> Result<ASTNode, LogicError> {
         // Only supporting JSONLogic format for now
         if format.is_some() && format != Some("jsonlogic") {
             return Err(LogicError::ParserError(format!(
@@ -95,7 +91,7 @@ impl DataLogic {
     /// Evaluates a logic rule against data
     pub fn evaluate<'a>(
         &'a self,
-        logic: &'a Token<'a>,
+        logic: &'a ASTNode<'a>,
         data: &'a DataValue<'a>,
     ) -> Result<DataValue<'a>, LogicError> {
         let result = evaluate(logic, data, &self.arena)

@@ -7,19 +7,19 @@ use std::str::FromStr;
 use bumpalo::Bump;
 use datavalue_rs::{helpers, DataValue, Number};
 
-use crate::parser::{OperatorType, ParserError, Result, Token};
+use crate::parser::{ASTNode, OperatorType, ParserError, Result};
 
 /// Internal function for parsing a DataValue into a token.
-pub fn parse_datavalue_internal<'a>(value: &DataValue<'a>, arena: &'a Bump) -> Result<Token<'a>> {
+pub fn parse_datavalue_internal<'a>(value: &DataValue<'a>, arena: &'a Bump) -> Result<ASTNode<'a>> {
     match value {
         // Simple literals
-        DataValue::Null => Ok(Token::Literal(helpers::null())),
-        DataValue::Bool(b) => Ok(Token::Literal(helpers::boolean(*b))),
-        DataValue::Number(Number::Integer(i)) => Ok(Token::Literal(helpers::int(*i))),
-        DataValue::Number(Number::Float(f)) => Ok(Token::Literal(helpers::float(*f))),
-        DataValue::String(s) => Ok(Token::Literal(helpers::string(arena, s))),
-        DataValue::DateTime(dt) => Ok(Token::Literal(DataValue::DateTime(*dt))),
-        DataValue::Duration(d) => Ok(Token::Literal(DataValue::Duration(*d))),
+        DataValue::Null => Ok(ASTNode::Literal(helpers::null())),
+        DataValue::Bool(b) => Ok(ASTNode::Literal(helpers::boolean(*b))),
+        DataValue::Number(Number::Integer(i)) => Ok(ASTNode::Literal(helpers::int(*i))),
+        DataValue::Number(Number::Float(f)) => Ok(ASTNode::Literal(helpers::float(*f))),
+        DataValue::String(s) => Ok(ASTNode::Literal(helpers::string(arena, s))),
+        DataValue::DateTime(dt) => Ok(ASTNode::Literal(DataValue::DateTime(*dt))),
+        DataValue::Duration(d) => Ok(ASTNode::Literal(DataValue::Duration(*d))),
 
         // Arrays could be literal arrays or token arrays
         DataValue::Array(arr) => parse_array(arr, arena),
@@ -29,12 +29,12 @@ pub fn parse_datavalue_internal<'a>(value: &DataValue<'a>, arena: &'a Bump) -> R
     }
 }
 
-fn parse_array<'a>(arr: &[DataValue<'a>], arena: &'a Bump) -> Result<Token<'a>> {
+fn parse_array<'a>(arr: &[DataValue<'a>], arena: &'a Bump) -> Result<ASTNode<'a>> {
     let mut values = Vec::with_capacity(arr.len());
     let mut tokens = Vec::with_capacity(arr.len());
     for item in arr.iter() {
         let token = parse_datavalue_internal(item, arena)?;
-        if matches!(token, Token::Literal(_)) {
+        if matches!(token, ASTNode::Literal(_)) {
             values.push(item.clone());
             tokens.push(Box::new(token));
         } else {
@@ -43,14 +43,17 @@ fn parse_array<'a>(arr: &[DataValue<'a>], arena: &'a Bump) -> Result<Token<'a>> 
     }
 
     if values.len() == arr.len() {
-        Ok(Token::ArrayLiteral(values))
+        Ok(ASTNode::ArrayLiteral(values))
     } else {
-        Ok(Token::Array(tokens))
+        Ok(ASTNode::Array(tokens))
     }
 }
 
 /// Parses a JSON object into a token.
-fn parse_object<'a>(entries: &'a [(&'a str, DataValue<'a>)], arena: &'a Bump) -> Result<Token<'a>> {
+fn parse_object<'a>(
+    entries: &'a [(&'a str, DataValue<'a>)],
+    arena: &'a Bump,
+) -> Result<ASTNode<'a>> {
     // If the object has exactly one key, it might be an operator
     if entries.len() == 1 {
         let (key, value) = &entries[0];
@@ -60,7 +63,7 @@ fn parse_object<'a>(entries: &'a [(&'a str, DataValue<'a>)], arena: &'a Bump) ->
             "val" => parse_val(value, arena),
             "preserve" => {
                 // The preserve operator returns its argument as-is without parsing it as an operator
-                Ok(Token::Literal(value.clone()))
+                Ok(ASTNode::Literal(value.clone()))
             }
             _ => {
                 // Check if it's a standard operator
@@ -74,7 +77,7 @@ fn parse_object<'a>(entries: &'a [(&'a str, DataValue<'a>)], arena: &'a Bump) ->
         }
     } else if entries.is_empty() {
         // Empty object literal
-        Ok(Token::Literal(helpers::object(arena, vec![])))
+        Ok(ASTNode::Literal(helpers::object(arena, vec![])))
     } else {
         // For multi-key objects, treat the first key as an unknown operator
         // This matches the JSONLogic behavior where multi-key objects should
@@ -88,14 +91,14 @@ fn parse_object<'a>(entries: &'a [(&'a str, DataValue<'a>)], arena: &'a Bump) ->
     }
 }
 
-fn parse_val<'a>(value: &DataValue<'a>, arena: &'a Bump) -> Result<Token<'a>> {
+fn parse_val<'a>(value: &DataValue<'a>, arena: &'a Bump) -> Result<ASTNode<'a>> {
     match value {
-        DataValue::String(s) => Ok(Token::Variable {
+        DataValue::String(s) => Ok(ASTNode::Variable {
             path: arena.alloc(DataValue::String(s)),
             default: None,
             scope_jump: None,
         }),
-        DataValue::Number(Number::Integer(i)) => Ok(Token::Variable {
+        DataValue::Number(Number::Integer(i)) => Ok(ASTNode::Variable {
             path: arena.alloc(DataValue::Number(Number::Integer(*i))),
             default: None,
             scope_jump: None,
@@ -104,8 +107,8 @@ fn parse_val<'a>(value: &DataValue<'a>, arena: &'a Bump) -> Result<Token<'a>> {
             if arr.len() > 1 {
                 if let DataValue::Array([DataValue::Number(Number::Integer(i))]) = arr[0] {
                     let jump = *i as usize;
-                    return Ok(Token::DynamicVariable {
-                        path_expr: Box::new(Token::Literal(DataValue::Array(&arr[1..]))),
+                    return Ok(ASTNode::DynamicVariable {
+                        path_expr: Box::new(ASTNode::Literal(DataValue::Array(&arr[1..]))),
                         default: None,
                         scope_jump: Some(jump),
                     });
@@ -115,13 +118,13 @@ fn parse_val<'a>(value: &DataValue<'a>, arena: &'a Bump) -> Result<Token<'a>> {
             let is_dynamic = arr.iter().any(|item| matches!(item, DataValue::Object(_)));
 
             if is_dynamic {
-                Ok(Token::DynamicVariable {
-                    path_expr: Box::new(Token::Literal(DataValue::Array(arr))),
+                Ok(ASTNode::DynamicVariable {
+                    path_expr: Box::new(ASTNode::Literal(DataValue::Array(arr))),
                     default: None,
                     scope_jump: None,
                 })
             } else {
-                Ok(Token::Variable {
+                Ok(ASTNode::Variable {
                     path: arena.alloc(DataValue::Array(arr)),
                     default: None,
                     scope_jump: None,
@@ -130,7 +133,7 @@ fn parse_val<'a>(value: &DataValue<'a>, arena: &'a Bump) -> Result<Token<'a>> {
         }
         DataValue::Object(entries) => {
             let operator = parse_object(entries, arena)?;
-            Ok(Token::DynamicVariable {
+            Ok(ASTNode::DynamicVariable {
                 path_expr: Box::new(operator),
                 default: None,
                 scope_jump: None,
@@ -173,19 +176,19 @@ fn parse_variable_path<'a>(path: &'a str, arena: &'a Bump) -> Result<&'a DataVal
 }
 
 /// Parses a variable reference.
-fn parse_variable<'a>(var_value: &DataValue<'a>, arena: &'a Bump) -> Result<Token<'a>> {
+fn parse_variable<'a>(var_value: &DataValue<'a>, arena: &'a Bump) -> Result<ASTNode<'a>> {
     match var_value {
         // Simple variable reference
         DataValue::String(path) => {
             let value = parse_variable_path(path, arena)?;
-            Ok(Token::Variable {
+            Ok(ASTNode::Variable {
                 path: value,
                 default: None,
                 scope_jump: None,
             })
         }
 
-        DataValue::Number(Number::Integer(i)) => Ok(Token::Variable {
+        DataValue::Number(Number::Integer(i)) => Ok(ASTNode::Variable {
             path: arena.alloc(DataValue::Number(Number::Integer(*i))),
             default: None,
             scope_jump: None,
@@ -193,7 +196,7 @@ fn parse_variable<'a>(var_value: &DataValue<'a>, arena: &'a Bump) -> Result<Toke
 
         DataValue::Null => {
             let value = arena.alloc(DataValue::Array(&[]));
-            Ok(Token::Variable {
+            Ok(ASTNode::Variable {
                 path: value,
                 default: None,
                 scope_jump: None,
@@ -205,7 +208,7 @@ fn parse_variable<'a>(var_value: &DataValue<'a>, arena: &'a Bump) -> Result<Toke
             // Handle empty array - treat it as a reference to the data itself
             if arr.is_empty() {
                 let path_data_value = arena.alloc(DataValue::Array(arr));
-                return Ok(Token::Variable {
+                return Ok(ASTNode::Variable {
                     path: path_data_value,
                     default: None,
                     scope_jump: None,
@@ -229,14 +232,14 @@ fn parse_variable<'a>(var_value: &DataValue<'a>, arena: &'a Bump) -> Result<Toke
                 } else {
                     None
                 };
-                return Ok(Token::DynamicVariable {
+                return Ok(ASTNode::DynamicVariable {
                     path_expr: Box::new(path_expr),
                     default: default_expr,
                     scope_jump: None,
                 });
             }
 
-            Ok(Token::Variable {
+            Ok(ASTNode::Variable {
                 path,
                 default,
                 scope_jump: None,
@@ -255,8 +258,8 @@ fn parse_operator<'a>(
     op_type: OperatorType,
     args_value: &DataValue<'a>,
     _arena: &'a Bump,
-) -> Result<Token<'a>> {
-    Ok(Token::Operator {
+) -> Result<ASTNode<'a>> {
+    Ok(ASTNode::Operator {
         op_type,
         args: Box::new(parse_datavalue_internal(args_value, _arena)?),
     })
@@ -267,8 +270,8 @@ fn parse_custom_operator<'a>(
     name: &str,
     args_value: &DataValue<'a>,
     arena: &'a Bump,
-) -> Result<Token<'a>> {
-    Ok(Token::CustomOperator {
+) -> Result<ASTNode<'a>> {
+    Ok(ASTNode::CustomOperator {
         name: arena.alloc_str(name),
         args: Box::new(parse_datavalue_internal(args_value, arena)?),
     })
@@ -288,7 +291,7 @@ mod tests {
         let null_json = r#"null"#;
         let token = parser::parser(null_json, &arena).unwrap();
         match token {
-            Token::Literal(DataValue::Null) => (),
+            ASTNode::Literal(DataValue::Null) => (),
             _ => panic!("Expected null literal"),
         }
 
@@ -296,7 +299,7 @@ mod tests {
         let bool_json = r#"true"#;
         let token = parser::parser(bool_json, &arena).unwrap();
         match token {
-            Token::Literal(DataValue::Bool(true)) => (),
+            ASTNode::Literal(DataValue::Bool(true)) => (),
             _ => panic!("Expected boolean literal"),
         }
 
@@ -304,7 +307,7 @@ mod tests {
         let int_json = r#"42"#;
         let token = parser::parser(int_json, &arena).unwrap();
         match token {
-            Token::Literal(DataValue::Number(Number::Integer(i))) => assert_eq!(*i, 42),
+            ASTNode::Literal(DataValue::Number(Number::Integer(i))) => assert_eq!(*i, 42),
             _ => panic!("Expected integer literal"),
         }
 
@@ -312,7 +315,7 @@ mod tests {
         let float_json = r#"3.14"#;
         let token = parser::parser(float_json, &arena).unwrap();
         match token {
-            Token::Literal(DataValue::Number(Number::Float(f))) => {
+            ASTNode::Literal(DataValue::Number(Number::Float(f))) => {
                 assert!((*f - 3.14).abs() < f64::EPSILON)
             }
             _ => panic!("Expected float literal"),
@@ -322,7 +325,7 @@ mod tests {
         let string_json = r#""hello""#;
         let token = parser::parser(string_json, &arena).unwrap();
         match token {
-            Token::Literal(DataValue::String(s)) => assert_eq!(*s, "hello"),
+            ASTNode::Literal(DataValue::String(s)) => assert_eq!(*s, "hello"),
             _ => panic!("Expected string literal"),
         }
 
@@ -331,7 +334,7 @@ mod tests {
         let token = parser::parser(array_json, &arena).unwrap();
         println!("{:?}", token);
         match token {
-            Token::ArrayLiteral(arr) => {
+            ASTNode::ArrayLiteral(arr) => {
                 assert_eq!(arr.len(), 3);
                 match arr[0] {
                     DataValue::Number(Number::Integer(i)) => assert_eq!(i, 1),
@@ -350,7 +353,7 @@ mod tests {
         let var_json = r#"{"var": "user.name"}"#;
         let token = parser::parser(var_json, &arena).unwrap();
         match token {
-            Token::Variable {
+            ASTNode::Variable {
                 path,
                 default,
                 scope_jump: _,
@@ -385,7 +388,7 @@ mod tests {
         let var_with_default_json = r#"{"var": ["user.name", "Anonymous"]}"#;
         let token = parser::parser(var_with_default_json, &arena).unwrap();
         match token {
-            Token::Variable {
+            ASTNode::Variable {
                 path,
                 ref default,
                 scope_jump: _,
@@ -424,7 +427,7 @@ mod tests {
         let empty_var_json = r#"{"var": []}"#;
         let token = parser::parser(empty_var_json, &arena).unwrap();
         match token {
-            Token::Variable {
+            ASTNode::Variable {
                 path,
                 default,
                 scope_jump: _,
@@ -447,10 +450,10 @@ mod tests {
         let op_json = r#"{"!": true}"#;
         let token = parser::parser(op_json, &arena).unwrap();
         match *token {
-            Token::Operator { op_type, ref args } => {
+            ASTNode::Operator { op_type, ref args } => {
                 assert_eq!(op_type, OperatorType::Not);
                 match **args {
-                    Token::Literal(DataValue::Bool(b)) => assert!(b),
+                    ASTNode::Literal(DataValue::Bool(b)) => assert!(b),
                     _ => panic!("Expected boolean argument"),
                 }
             }
@@ -464,7 +467,7 @@ mod tests {
         ]}"#;
         let token = parser::parser(reduce_json, &arena).unwrap();
         match *token {
-            Token::Operator { op_type, .. } => {
+            ASTNode::Operator { op_type, .. } => {
                 assert_eq!(op_type, OperatorType::Reduce);
                 // No need to validate the exact args structure
             }
@@ -475,10 +478,10 @@ mod tests {
         let op_with_args_json = r#"{"and": [true, false, true]}"#;
         let token = parser::parser(op_with_args_json, &arena).unwrap();
         match *token {
-            Token::Operator { op_type, ref args } => {
+            ASTNode::Operator { op_type, ref args } => {
                 assert_eq!(op_type, OperatorType::And);
                 match &**args {
-                    Token::ArrayLiteral(arr) => {
+                    ASTNode::ArrayLiteral(arr) => {
                         assert_eq!(arr.len(), 3);
                         assert!(matches!(arr[0], DataValue::Bool(true)));
                         assert!(matches!(arr[1], DataValue::Bool(false)));
@@ -511,7 +514,7 @@ mod tests {
 
         // Just verify it parses without error and has the right structure
         match *token {
-            Token::Operator { op_type, .. } => {
+            ASTNode::Operator { op_type, .. } => {
                 assert_eq!(op_type, OperatorType::If);
             }
             _ => panic!("Expected if operator token"),
@@ -529,10 +532,10 @@ mod tests {
 
         // Verify the token is a custom operator
         match *token {
-            Token::CustomOperator { name, ref args } => {
+            ASTNode::CustomOperator { name, ref args } => {
                 assert_eq!(name, "custom_op");
                 match &**args {
-                    Token::ArrayLiteral(arr) => {
+                    ASTNode::ArrayLiteral(arr) => {
                         assert_eq!(arr.len(), 3);
                         assert!(matches!(arr[0], DataValue::Number(Number::Integer(1))));
                         assert!(matches!(arr[1], DataValue::Number(Number::Integer(2))));

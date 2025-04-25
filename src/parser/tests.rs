@@ -4,7 +4,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::parser::{parser, OperatorType, ParserError, Token};
+    use crate::parser::{parser, ASTNode, OperatorType, ParserError};
     use bumpalo::Bump;
     use datavalue_rs::{helpers, DataValue, Number};
 
@@ -18,9 +18,9 @@ mod tests {
         let token = parser(json_str, &arena).unwrap();
 
         // Verify the token structure
-        assert!(matches!(token, Token::Operator { .. }));
+        assert!(matches!(token, ASTNode::Operator { .. }));
         match token {
-            Token::Operator { op_type, args: _ } => {
+            ASTNode::Operator { op_type, args: _ } => {
                 assert_eq!(*op_type, OperatorType::Equal);
             }
             _ => panic!("Expected operator token"),
@@ -50,7 +50,7 @@ mod tests {
 
         let token = parser(json_str, &arena).unwrap();
         match token {
-            Token::Literal(DataValue::Bool(b)) => {
+            ASTNode::Literal(DataValue::Bool(b)) => {
                 assert!(*b);
             }
             _ => panic!("Expected boolean literal token"),
@@ -64,7 +64,7 @@ mod tests {
 
         let token = parser(json_str, &arena).unwrap();
         match token {
-            Token::Literal(DataValue::Number(Number::Integer(i))) => {
+            ASTNode::Literal(DataValue::Number(Number::Integer(i))) => {
                 assert_eq!(*i, 42);
             }
             _ => panic!("Expected integer literal token"),
@@ -73,7 +73,7 @@ mod tests {
         let json_str = "3.14";
         let token = parser(json_str, &arena).unwrap();
         match token {
-            Token::Literal(DataValue::Number(Number::Float(f))) => {
+            ASTNode::Literal(DataValue::Number(Number::Float(f))) => {
                 assert!(f > &3.13 && f < &3.15);
             }
             _ => panic!("Expected float literal token"),
@@ -87,7 +87,7 @@ mod tests {
 
         let token = parser(json_str, &arena).unwrap();
         match token {
-            Token::Literal(DataValue::String(s)) => {
+            ASTNode::Literal(DataValue::String(s)) => {
                 assert_eq!(*s, "hello world");
             }
             _ => panic!("Expected string literal token"),
@@ -101,7 +101,7 @@ mod tests {
 
         let token = parser(json_str, &arena).unwrap();
         match token {
-            Token::ArrayLiteral(values) => {
+            ASTNode::ArrayLiteral(values) => {
                 assert_eq!(values.len(), 3);
                 assert!(matches!(values[0], DataValue::Number(Number::Integer(1))));
                 assert!(matches!(values[1], DataValue::Number(Number::Integer(2))));
@@ -119,7 +119,7 @@ mod tests {
 
         let token = parser(json_str, &arena).unwrap();
         match token {
-            Token::Literal(DataValue::Object(entries)) => {
+            ASTNode::Literal(DataValue::Object(entries)) => {
                 assert_eq!(entries.len(), 2);
 
                 // Find and check the name entry
@@ -143,7 +143,7 @@ mod tests {
 
         let token = parser(json_str, &arena).unwrap();
         match token {
-            Token::Variable {
+            ASTNode::Variable {
                 path,
                 default,
                 scope_jump: _,
@@ -177,7 +177,7 @@ mod tests {
         let json_str = r#"{"var": ["user.name", "Unknown"]}"#;
         let token = parser(json_str, &arena).unwrap();
         match token {
-            Token::Variable {
+            ASTNode::Variable {
                 path,
                 default,
                 scope_jump: _,
@@ -221,10 +221,10 @@ mod tests {
         let json_str = r#"{"!": true}"#;
         let token = parser(json_str, &arena).unwrap();
         match token {
-            Token::Operator { op_type, args } => {
+            ASTNode::Operator { op_type, args } => {
                 assert_eq!(*op_type, OperatorType::Not);
                 match &**args {
-                    Token::Literal(DataValue::Bool(b)) => {
+                    ASTNode::Literal(DataValue::Bool(b)) => {
                         assert!(*b);
                     }
                     _ => panic!("Expected boolean argument"),
@@ -240,7 +240,7 @@ mod tests {
         ]}"#;
         let token = parser(reduce_json, &arena).unwrap();
         match token {
-            Token::Operator { op_type, .. } => {
+            ASTNode::Operator { op_type, .. } => {
                 assert_eq!(*op_type, OperatorType::Reduce);
                 // No need to validate the exact args structure
             }
@@ -251,10 +251,10 @@ mod tests {
         let json_str = r#"{"and": [true, false, true]}"#;
         let token = parser(json_str, &arena).unwrap();
         match token {
-            Token::Operator { op_type, args } => {
+            ASTNode::Operator { op_type, args } => {
                 assert_eq!(*op_type, OperatorType::And);
                 match &**args {
-                    Token::ArrayLiteral(arr) => {
+                    ASTNode::ArrayLiteral(arr) => {
                         assert_eq!(arr.len(), 3);
                         assert!(matches!(arr[0], DataValue::Bool(true)));
                         assert!(matches!(arr[1], DataValue::Bool(false)));
@@ -274,10 +274,10 @@ mod tests {
 
         let token = parser(json_str, &arena).unwrap();
         match token {
-            Token::CustomOperator { name, args } => {
+            ASTNode::CustomOperator { name, args } => {
                 assert_eq!(*name, "custom_op");
                 match &**args {
-                    Token::ArrayLiteral(arr) => {
+                    ASTNode::ArrayLiteral(arr) => {
                         assert_eq!(arr.len(), 3);
                         assert!(matches!(arr[0], DataValue::Number(Number::Integer(1))));
                         assert!(matches!(arr[1], DataValue::Number(Number::Integer(2))));
@@ -309,7 +309,7 @@ mod tests {
 
         let token = parser(json_str, &arena).unwrap();
         match token {
-            Token::Operator { op_type, .. } => {
+            ASTNode::Operator { op_type, .. } => {
                 assert_eq!(*op_type, OperatorType::If);
             }
             _ => panic!("Expected if operator token"),
@@ -332,7 +332,7 @@ mod tests {
 
         let token = parser(json_str, &arena).unwrap();
         match token {
-            Token::Operator { op_type, .. } => {
+            ASTNode::Operator { op_type, .. } => {
                 assert_eq!(*op_type, OperatorType::And);
             }
             _ => panic!("Expected and operator token"),
@@ -344,18 +344,18 @@ mod tests {
         let arena = Bump::new();
 
         // Test is_operator
-        let op_token = Box::new(Token::Operator {
+        let op_token = Box::new(ASTNode::Operator {
             op_type: OperatorType::Add,
-            args: Box::new(Token::Literal(helpers::null())),
+            args: Box::new(ASTNode::Literal(helpers::null())),
         });
         assert!(op_token.is_operator());
 
         // Test is_literal
-        let lit_token = Box::new(Token::Literal(helpers::boolean(true)));
+        let lit_token = Box::new(ASTNode::Literal(helpers::boolean(true)));
         assert!(lit_token.is_literal());
 
         // Test is_variable
-        let var_token = Box::new(Token::Variable {
+        let var_token = Box::new(ASTNode::Variable {
             path: arena.alloc(DataValue::String("path")),
             default: None,
             scope_jump: None,
@@ -363,9 +363,9 @@ mod tests {
         assert!(var_token.is_variable());
 
         // Test is_custom_operator
-        let custom_token = Box::new(Token::CustomOperator {
+        let custom_token = Box::new(ASTNode::CustomOperator {
             name: arena.alloc_str("custom"),
-            args: Box::new(Token::Literal(helpers::null())),
+            args: Box::new(ASTNode::Literal(helpers::null())),
         });
         assert!(custom_token.is_custom_operator());
     }
@@ -375,100 +375,100 @@ mod tests {
         let arena = Bump::new();
 
         // Test literal - should be static
-        let literal = Token::Literal(helpers::int(42));
-        assert!(literal.is_static_token());
+        let literal = ASTNode::Literal(helpers::int(42));
+        assert!(literal.is_static());
 
         // Test array of literals - should be static
-        let array = Token::ArrayLiteral(vec![
+        let array = ASTNode::ArrayLiteral(vec![
             DataValue::Number(Number::Integer(1)),
             DataValue::Number(Number::Integer(2)),
         ]);
-        assert!(array.is_static_token());
+        assert!(array.is_static());
 
         // Test variable - should not be static
-        let variable = Token::Variable {
+        let variable = ASTNode::Variable {
             path: arena.alloc(DataValue::String("foo")),
             default: None,
             scope_jump: None,
         };
-        assert!(!variable.is_static_token());
+        assert!(!variable.is_static());
 
         // Test dynamic variable - should not be static
-        let dynamic_var = Token::DynamicVariable {
-            path_expr: Box::new(Token::Literal(helpers::string(&arena, "path"))),
+        let dynamic_var = ASTNode::DynamicVariable {
+            path_expr: Box::new(ASTNode::Literal(helpers::string(&arena, "path"))),
             default: None,
             scope_jump: None,
         };
-        assert!(!dynamic_var.is_static_token());
+        assert!(!dynamic_var.is_static());
 
         // Test operator with static arguments - should be static
-        let add_op = Token::Operator {
+        let add_op = ASTNode::Operator {
             op_type: OperatorType::Add,
-            args: Box::new(Token::ArrayLiteral(vec![
+            args: Box::new(ASTNode::ArrayLiteral(vec![
                 DataValue::Number(Number::Integer(1)),
                 DataValue::Number(Number::Integer(2)),
             ])),
         };
-        assert!(add_op.is_static_token());
+        assert!(add_op.is_static());
 
         // Test var operator - should not be static
-        let var_op = Token::Operator {
+        let var_op = ASTNode::Operator {
             op_type: OperatorType::Var,
-            args: Box::new(Token::Literal(helpers::string(&arena, "foo"))),
+            args: Box::new(ASTNode::Literal(helpers::string(&arena, "foo"))),
         };
-        assert!(!var_op.is_static_token());
+        assert!(!var_op.is_static());
 
         // Test operator with mixed arguments - should be static
-        let mixed_op = Token::Operator {
+        let mixed_op = ASTNode::Operator {
             op_type: OperatorType::Add,
-            args: Box::new(Token::ArrayLiteral(vec![
+            args: Box::new(ASTNode::ArrayLiteral(vec![
                 DataValue::Number(Number::Integer(1)),
                 DataValue::String("bar"),
             ])),
         };
-        assert!(mixed_op.is_static_token());
+        assert!(mixed_op.is_static());
 
         // Test nested operators - should maintain static status correctly
-        let nested_static = Token::Operator {
+        let nested_static = ASTNode::Operator {
             op_type: OperatorType::And,
-            args: Box::new(Token::Array(vec![
-                Box::new(Token::Operator {
+            args: Box::new(ASTNode::Array(vec![
+                Box::new(ASTNode::Operator {
                     op_type: OperatorType::Add,
-                    args: Box::new(Token::ArrayLiteral(vec![
+                    args: Box::new(ASTNode::ArrayLiteral(vec![
                         DataValue::Number(Number::Integer(1)),
                         DataValue::Number(Number::Integer(2)),
                     ])),
                 }),
-                Box::new(Token::Literal(helpers::boolean(true))),
+                Box::new(ASTNode::Literal(helpers::boolean(true))),
             ])),
         };
-        assert!(nested_static.is_static_token());
+        assert!(nested_static.is_static());
 
         // Test nested operators with variable - should not be static
-        let nested_non_static = Token::Operator {
+        let nested_non_static = ASTNode::Operator {
             op_type: OperatorType::And,
-            args: Box::new(Token::Array(vec![
-                Box::new(Token::Operator {
+            args: Box::new(ASTNode::Array(vec![
+                Box::new(ASTNode::Operator {
                     op_type: OperatorType::Add,
-                    args: Box::new(Token::ArrayLiteral(vec![
+                    args: Box::new(ASTNode::ArrayLiteral(vec![
                         DataValue::Number(Number::Integer(1)),
                         DataValue::Number(Number::Integer(2)),
                     ])),
                 }),
-                Box::new(Token::Variable {
+                Box::new(ASTNode::Variable {
                     path: arena.alloc(DataValue::String("flag")),
                     default: None,
                     scope_jump: None,
                 }),
             ])),
         };
-        assert!(!nested_non_static.is_static_token());
+        assert!(!nested_non_static.is_static());
 
         // Test custom operator - should not be static
-        let custom_op = Token::CustomOperator {
+        let custom_op = ASTNode::CustomOperator {
             name: arena.alloc_str("my_op"),
-            args: Box::new(Token::Literal(helpers::int(42))),
+            args: Box::new(ASTNode::Literal(helpers::int(42))),
         };
-        assert!(!custom_op.is_static_token());
+        assert!(!custom_op.is_static());
     }
 }

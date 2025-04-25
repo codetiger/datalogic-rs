@@ -9,7 +9,7 @@ use crate::operators::comparison;
 use crate::operators::logic;
 use crate::operators::misc;
 use crate::operators::string;
-use crate::parser::{EvaluationStrategy, OperatorType, Token};
+use crate::parser::{ASTNode, EvaluationStrategy, OperatorType};
 use bumpalo::collections::Vec as BumpVec;
 use bumpalo::Bump;
 use datavalue_rs::Number;
@@ -19,7 +19,7 @@ use datavalue_rs::{DataValue, Result};
 #[derive(Debug, Clone)]
 pub enum Instruction<'a> {
     /// Evaluate a token
-    Eval(&'a Token<'a>),
+    Eval(&'a ASTNode<'a>),
 
     /// Collect array items from the value stack
     Array(usize),
@@ -28,7 +28,7 @@ pub enum Instruction<'a> {
     OpArgs(OperatorType, usize),
 
     /// Evaluate a lazy operator with its raw arguments token
-    LazyOp(OperatorType, &'a Token<'a>),
+    LazyOp(OperatorType, &'a ASTNode<'a>),
 
     /// Create an array directly from literal values (optimization)
     ArrayLit(&'a [DataValue<'a>]),
@@ -42,7 +42,7 @@ pub struct InstructionStack<'a> {
 
 impl<'a> InstructionStack<'a> {
     /// Creates a new instruction stack with the given token as the root
-    pub fn new(token: &'a Token<'a>) -> Self {
+    pub fn new(token: &'a ASTNode<'a>) -> Self {
         let instructions = vec![Instruction::Eval(token)];
 
         Self { instructions }
@@ -66,29 +66,29 @@ impl<'a> InstructionStack<'a> {
                     // For evaluation instructions, we need to process the token
                     // to build up the instruction stack
                     match token {
-                        Token::Literal(_) => {
+                        ASTNode::Literal(_) => {
                             // Literals just become a single instruction
                             compiled_instructions.push(instruction);
                         }
 
-                        Token::ArrayLiteral(items) => {
+                        ASTNode::ArrayLiteral(items) => {
                             // Optimization: directly create array instead of pushing items + collecting
                             compiled_instructions.push(Instruction::ArrayLit(items));
                         }
 
-                        Token::Operator { op_type, args } => {
+                        ASTNode::Operator { op_type, args } => {
                             // Ensure all operators use their evaluation strategy without exceptions
                             match op_type.evaluation_strategy() {
                                 EvaluationStrategy::Eager => {
                                     match &**args {
-                                        Token::ArrayLiteral(items) => {
+                                        ASTNode::ArrayLiteral(items) => {
                                             let count = items.len();
                                             // Add operator and all items as separate instructions
                                             compiled_instructions
                                                 .push(Instruction::OpArgs(*op_type, count));
                                             compiled_instructions.push(instruction);
                                         }
-                                        Token::Array(items) => {
+                                        ASTNode::Array(items) => {
                                             let count = items.len();
                                             // Add operator and instructions to evaluate all items
                                             compiled_instructions
@@ -111,7 +111,7 @@ impl<'a> InstructionStack<'a> {
                             }
                         }
 
-                        Token::Array(items) => {
+                        ASTNode::Array(items) => {
                             let count = items.len();
                             compiled_instructions.push(Instruction::Array(count));
                             for item in items.iter() {
@@ -119,15 +119,15 @@ impl<'a> InstructionStack<'a> {
                             }
                         }
 
-                        Token::Variable { .. } => {
+                        ASTNode::Variable { .. } => {
                             compiled_instructions.push(instruction);
                         }
 
-                        Token::DynamicVariable { .. } => {
+                        ASTNode::DynamicVariable { .. } => {
                             compiled_instructions.push(instruction);
                         }
 
-                        Token::CustomOperator { .. } => {
+                        ASTNode::CustomOperator { .. } => {
                             compiled_instructions.push(instruction);
                         }
                     }
@@ -195,17 +195,17 @@ impl<'a> InstructionStack<'a> {
     fn process_token(
         &self,
         values: &mut BumpVec<&'a DataValue<'a>>,
-        token: &'a Token<'a>,
+        token: &'a ASTNode<'a>,
         data: &'a DataValue<'a>,
         arena: &'a Bump,
     ) -> Result<()> {
         match token {
             // For literal values, just push them onto the value stack
-            Token::Literal(value) => {
+            ASTNode::Literal(value) => {
                 values.push(value);
             }
 
-            Token::ArrayLiteral(items) => {
+            ASTNode::ArrayLiteral(items) => {
                 // Optimization: create array directly rather than pushing items and collecting
                 let array_values: Vec<DataValue<'a>> = items.to_vec();
                 let array = DataValue::Array(arena.alloc_slice_fill_iter(array_values));
@@ -213,12 +213,12 @@ impl<'a> InstructionStack<'a> {
             }
 
             // For operators, handle based on the type and evaluation strategy
-            Token::Operator { op_type, args } => {
+            ASTNode::Operator { op_type, args } => {
                 // Check the evaluation strategy for this operator
                 match op_type.evaluation_strategy() {
                     EvaluationStrategy::Eager => {
                         match &**args {
-                            Token::ArrayLiteral(items) => {
+                            ASTNode::ArrayLiteral(items) => {
                                 // For ArrayLiteral, just push the items directly and apply the operator
                                 for item in items {
                                     values.push(item);
@@ -231,7 +231,7 @@ impl<'a> InstructionStack<'a> {
                                     arena,
                                 )?;
                             }
-                            Token::Array(items) => {
+                            ASTNode::Array(items) => {
                                 // For nested tokens, process each one first
                                 for item in items {
                                     self.process_token(values, item, data, arena)?;
@@ -261,7 +261,7 @@ impl<'a> InstructionStack<'a> {
             }
 
             // For arrays, evaluate each item and collect the results
-            Token::Array(items) => {
+            ASTNode::Array(items) => {
                 for item in items {
                     self.process_token(values, item, data, arena)?;
                 }
@@ -270,7 +270,7 @@ impl<'a> InstructionStack<'a> {
             }
 
             // Handle variables
-            Token::Variable {
+            ASTNode::Variable {
                 path,
                 default,
                 scope_jump,
@@ -278,7 +278,7 @@ impl<'a> InstructionStack<'a> {
                 self.evaluate_variable(values, path, default, scope_jump, data, arena)?;
             }
 
-            Token::DynamicVariable {
+            ASTNode::DynamicVariable {
                 path_expr,
                 default,
                 scope_jump,
@@ -313,7 +313,7 @@ impl<'a> InstructionStack<'a> {
                 self.evaluate_variable(values, path, &evaluated_default, scope_jump, data, arena)?;
             }
 
-            Token::CustomOperator { .. } => {
+            ASTNode::CustomOperator { .. } => {
                 return Err(datavalue_rs::Error::Custom(
                     "Custom operators not yet implemented".to_string(),
                 ));
@@ -327,7 +327,7 @@ impl<'a> InstructionStack<'a> {
     fn evaluate_lazy_operator(
         &self,
         op_type: OperatorType,
-        args: &'a Token<'a>,
+        args: &'a ASTNode<'a>,
         data: &'a DataValue<'a>,
         arena: &'a Bump,
     ) -> Result<&'a DataValue<'a>> {
@@ -527,7 +527,7 @@ impl<'a> InstructionStack<'a> {
     /// Evaluates a token and returns its value
     fn evaluate_token(
         &self,
-        token: &'a Token<'a>,
+        token: &'a ASTNode<'a>,
         data: &'a DataValue<'a>,
         arena: &'a Bump,
     ) -> Result<&'a DataValue<'a>> {
@@ -542,7 +542,7 @@ impl<'a> InstructionStack<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::parser::Token;
+    use crate::parser::ASTNode;
     use datavalue_rs::helpers;
 
     #[test]
@@ -551,12 +551,12 @@ mod tests {
         let data = arena.alloc(DataValue::Null);
 
         // Create a simple addition: 1 + 2 + 3
-        let arg1 = Box::new(Token::Literal(helpers::int(1)));
-        let arg2 = Box::new(Token::Literal(helpers::int(2)));
-        let arg3 = Box::new(Token::Literal(helpers::int(3)));
+        let arg1 = Box::new(ASTNode::Literal(helpers::int(1)));
+        let arg2 = Box::new(ASTNode::Literal(helpers::int(2)));
+        let arg3 = Box::new(ASTNode::Literal(helpers::int(3)));
 
-        let args = Box::new(Token::Array(vec![arg1, arg2, arg3]));
-        let add_token = Token::Operator {
+        let args = Box::new(ASTNode::Array(vec![arg1, arg2, arg3]));
+        let add_token = ASTNode::Operator {
             op_type: OperatorType::Add,
             args,
         };
@@ -575,28 +575,28 @@ mod tests {
         let data = arena.alloc(DataValue::Null);
 
         // Create a nested addition: (1 + 2) + (3 + 4)
-        let inner_args1 = Box::new(Token::ArrayLiteral(vec![
+        let inner_args1 = Box::new(ASTNode::ArrayLiteral(vec![
             DataValue::Number(Number::Integer(1)),
             DataValue::Number(Number::Integer(2)),
         ]));
 
-        let inner_args2 = Box::new(Token::ArrayLiteral(vec![
+        let inner_args2 = Box::new(ASTNode::ArrayLiteral(vec![
             DataValue::Number(Number::Integer(3)),
             DataValue::Number(Number::Integer(4)),
         ]));
 
-        let inner_add1 = Box::new(Token::Operator {
+        let inner_add1 = Box::new(ASTNode::Operator {
             op_type: OperatorType::Add,
             args: inner_args1,
         });
 
-        let inner_add2 = Box::new(Token::Operator {
+        let inner_add2 = Box::new(ASTNode::Operator {
             op_type: OperatorType::Add,
             args: inner_args2,
         });
 
-        let args = Box::new(Token::Array(vec![inner_add1, inner_add2]));
-        let add_token = Token::Operator {
+        let args = Box::new(ASTNode::Array(vec![inner_add1, inner_add2]));
+        let add_token = ASTNode::Operator {
             op_type: OperatorType::Add,
             args,
         };
@@ -615,12 +615,12 @@ mod tests {
         let data = arena.alloc(DataValue::Null);
 
         // Create a subtraction: 10 - 3 - 2
-        let arg1 = Box::new(Token::Literal(helpers::int(10)));
-        let arg2 = Box::new(Token::Literal(helpers::int(3)));
-        let arg3 = Box::new(Token::Literal(helpers::int(2)));
+        let arg1 = Box::new(ASTNode::Literal(helpers::int(10)));
+        let arg2 = Box::new(ASTNode::Literal(helpers::int(3)));
+        let arg3 = Box::new(ASTNode::Literal(helpers::int(2)));
 
-        let args = Box::new(Token::Array(vec![arg1, arg2, arg3]));
-        let subtract_token = Token::Operator {
+        let args = Box::new(ASTNode::Array(vec![arg1, arg2, arg3]));
+        let subtract_token = ASTNode::Operator {
             op_type: OperatorType::Subtract,
             args,
         };
@@ -638,12 +638,12 @@ mod tests {
         let arena = Bump::new();
         let data = arena.alloc(DataValue::Null);
 
-        let args = Box::new(Token::ArrayLiteral(vec![
+        let args = Box::new(ASTNode::ArrayLiteral(vec![
             DataValue::Number(Number::Integer(2)),
             DataValue::Number(Number::Integer(3)),
             DataValue::Number(Number::Integer(4)),
         ]));
-        let multiply_token = Token::Operator {
+        let multiply_token = ASTNode::Operator {
             op_type: OperatorType::Multiply,
             args,
         };
@@ -661,12 +661,12 @@ mod tests {
         let arena = Bump::new();
         let data = arena.alloc(DataValue::Null);
 
-        let args = Box::new(Token::ArrayLiteral(vec![
+        let args = Box::new(ASTNode::ArrayLiteral(vec![
             DataValue::Number(Number::Integer(20)),
             DataValue::Number(Number::Integer(4)),
             DataValue::Number(Number::Integer(2)),
         ]));
-        let divide_token = Token::Operator {
+        let divide_token = ASTNode::Operator {
             op_type: OperatorType::Divide,
             args,
         };
@@ -684,11 +684,11 @@ mod tests {
         let arena = Bump::new();
         let data = arena.alloc(DataValue::Null);
 
-        let args = Box::new(Token::ArrayLiteral(vec![
+        let args = Box::new(ASTNode::ArrayLiteral(vec![
             DataValue::Number(Number::Integer(17)),
             DataValue::Number(Number::Integer(5)),
         ]));
-        let modulo_token = Token::Operator {
+        let modulo_token = ASTNode::Operator {
             op_type: OperatorType::Modulo,
             args,
         };
@@ -707,9 +707,9 @@ mod tests {
         let data = arena.alloc(DataValue::Null);
 
         // Create a custom min operator: min(5, 2, 8, 1, 9)
-        let min_token = Token::Operator {
+        let min_token = ASTNode::Operator {
             op_type: OperatorType::Min,
-            args: Box::new(Token::ArrayLiteral(vec![
+            args: Box::new(ASTNode::ArrayLiteral(vec![
                 DataValue::Number(Number::Integer(5)),
                 DataValue::Number(Number::Integer(2)),
                 DataValue::Number(Number::Integer(8)),
@@ -732,9 +732,9 @@ mod tests {
         let data = arena.alloc(DataValue::Null);
 
         // Create a custom max operator: max(5, 2, 8, 1, 9)
-        let max_token = Token::Operator {
+        let max_token = ASTNode::Operator {
             op_type: OperatorType::Max,
-            args: Box::new(Token::ArrayLiteral(vec![
+            args: Box::new(ASTNode::ArrayLiteral(vec![
                 DataValue::Number(Number::Integer(5)),
                 DataValue::Number(Number::Integer(2)),
                 DataValue::Number(Number::Integer(8)),
@@ -757,9 +757,9 @@ mod tests {
         let data = arena.alloc(DataValue::Null);
 
         // Create a custom abs operator: abs(-5, 2, 8, 1, 9)
-        let abs_token = Token::Operator {
+        let abs_token = ASTNode::Operator {
             op_type: OperatorType::Abs,
-            args: Box::new(Token::ArrayLiteral(vec![
+            args: Box::new(ASTNode::ArrayLiteral(vec![
                 DataValue::Number(Number::Integer(-5)),
                 DataValue::Number(Number::Integer(2)),
                 DataValue::Number(Number::Integer(8)),
@@ -794,9 +794,9 @@ mod tests {
         let data = arena.alloc(DataValue::Null);
 
         // Create a custom ceil operator: ceil(1.2, 2.7, 3.8, 4.3)
-        let ceil_token = Token::Operator {
+        let ceil_token = ASTNode::Operator {
             op_type: OperatorType::Ceil,
-            args: Box::new(Token::ArrayLiteral(vec![
+            args: Box::new(ASTNode::ArrayLiteral(vec![
                 DataValue::Number(Number::Float(1.2)),
                 DataValue::Number(Number::Float(2.7)),
                 DataValue::Number(Number::Float(3.8)),
@@ -829,9 +829,9 @@ mod tests {
         let data = arena.alloc(DataValue::Null);
 
         // Create a custom floor operator: floor(1.2, 2.7, 3.8, 4.3)
-        let floor_token = Token::Operator {
+        let floor_token = ASTNode::Operator {
             op_type: OperatorType::Floor,
-            args: Box::new(Token::ArrayLiteral(vec![
+            args: Box::new(ASTNode::ArrayLiteral(vec![
                 DataValue::Number(Number::Float(1.2)),
                 DataValue::Number(Number::Float(2.7)),
                 DataValue::Number(Number::Float(3.8)),
