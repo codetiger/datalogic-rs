@@ -52,11 +52,7 @@ impl<'a> InstructionStack<'a> {
     ///
     /// This allows precompilation of the instructions, which can be stored
     /// and reused multiple times with different data contexts.
-    pub fn compile(&mut self, token: &'a Token<'a>) -> Result<()> {
-        // Clear any existing instructions and add the root token
-        self.instructions.clear();
-        self.instructions.push(Instruction::Evaluate(token));
-
+    pub fn compile(&mut self) -> Result<()> {
         // A temporary vector to store the compiled instructions in correct order
         let mut compiled_instructions = Vec::new();
         let mut stack_index = self.instructions.len();

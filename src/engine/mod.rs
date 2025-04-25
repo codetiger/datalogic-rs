@@ -25,7 +25,7 @@ impl<'a> Logic<'a> {
     pub fn new(token: &'a Token<'a>, arena: &'a Bump) -> Result<Self> {
         // Create an instruction stack and compile the instructions
         let mut instruction_stack = InstructionStack::new(token);
-        instruction_stack.compile(token)?;
+        instruction_stack.compile()?;
 
         Ok(Self {
             instruction_stack: arena.alloc(instruction_stack),

@@ -21,7 +21,7 @@ fn main() {
 
     // Compile the instruction stack
     stack
-        .compile(token)
+        .compile()
         .expect("Failed to compile instruction stack");
 
     // Print the compiled instructions
@@ -39,9 +39,7 @@ fn main() {
     println!("Initial instruction stack: {:?}", if_stack.instructions);
 
     // Compile the instruction stack
-    if_stack
-        .compile(if_token)
-        .expect("Failed to compile if stack");
+    if_stack.compile().expect("Failed to compile if stack");
 
     // Print compiled instructions
     println!("Compiled instruction stack: {:?}\n", if_stack.instructions);
@@ -56,9 +54,7 @@ fn main() {
 
     // Print initial and compiled states
     println!("Initial instruction stack: {:?}", and_stack.instructions);
-    and_stack
-        .compile(and_token)
-        .expect("Failed to compile AND stack");
+    and_stack.compile().expect("Failed to compile AND stack");
     println!("Compiled instruction stack: {:?}\n", and_stack.instructions);
 
     // Explain instruction types
