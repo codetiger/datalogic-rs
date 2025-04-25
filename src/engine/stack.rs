@@ -19,19 +19,19 @@ use datavalue_rs::{DataValue, Result};
 #[derive(Debug, Clone)]
 pub enum Instruction<'a> {
     /// Evaluate a token
-    Evaluate(&'a Token<'a>),
+    Eval(&'a Token<'a>),
 
     /// Collect array items from the value stack
-    CollectArray(usize),
+    Array(usize),
 
     /// Collect operator arguments from the value stack
-    CollectOperatorArgs(OperatorType, usize),
+    OpArgs(OperatorType, usize),
 
     /// Evaluate a lazy operator with its raw arguments token
-    EvaluateLazyOperator(OperatorType, &'a Token<'a>),
+    LazyOp(OperatorType, &'a Token<'a>),
 
     /// Create an array directly from literal values (optimization)
-    CreateArray(&'a [DataValue<'a>]),
+    ArrayLit(&'a [DataValue<'a>]),
 }
 
 /// A stack of instructions for evaluating JSONLogic expressions
@@ -43,7 +43,7 @@ pub struct InstructionStack<'a> {
 impl<'a> InstructionStack<'a> {
     /// Creates a new instruction stack with the given token as the root
     pub fn new(token: &'a Token<'a>) -> Self {
-        let instructions = vec![Instruction::Evaluate(token)];
+        let instructions = vec![Instruction::Eval(token)];
 
         Self { instructions }
     }
@@ -62,7 +62,7 @@ impl<'a> InstructionStack<'a> {
             let instruction = self.instructions[stack_index - 1].clone();
             stack_index -= 1;
             match instruction {
-                Instruction::Evaluate(token) => {
+                Instruction::Eval(token) => {
                     // For evaluation instructions, we need to process the token
                     // to build up the instruction stack
                     match token {
@@ -73,7 +73,7 @@ impl<'a> InstructionStack<'a> {
 
                         Token::ArrayLiteral(items) => {
                             // Optimization: directly create array instead of pushing items + collecting
-                            compiled_instructions.push(Instruction::CreateArray(items));
+                            compiled_instructions.push(Instruction::ArrayLit(items));
                         }
 
                         Token::Operator { op_type, args } => {
@@ -84,43 +84,38 @@ impl<'a> InstructionStack<'a> {
                                         Token::ArrayLiteral(items) => {
                                             let count = items.len();
                                             // Add operator and all items as separate instructions
-                                            compiled_instructions.push(
-                                                Instruction::CollectOperatorArgs(*op_type, count),
-                                            );
+                                            compiled_instructions
+                                                .push(Instruction::OpArgs(*op_type, count));
                                             compiled_instructions.push(instruction);
                                         }
                                         Token::Array(items) => {
                                             let count = items.len();
                                             // Add operator and instructions to evaluate all items
-                                            compiled_instructions.push(
-                                                Instruction::CollectOperatorArgs(*op_type, count),
-                                            );
+                                            compiled_instructions
+                                                .push(Instruction::OpArgs(*op_type, count));
                                             for item in items.iter() {
-                                                compiled_instructions
-                                                    .push(Instruction::Evaluate(item));
+                                                compiled_instructions.push(Instruction::Eval(item));
                                             }
                                         }
                                         _ => {
-                                            compiled_instructions.push(
-                                                Instruction::CollectOperatorArgs(*op_type, 1),
-                                            );
-                                            compiled_instructions.push(Instruction::Evaluate(args));
+                                            compiled_instructions
+                                                .push(Instruction::OpArgs(*op_type, 1));
+                                            compiled_instructions.push(Instruction::Eval(args));
                                         }
                                     }
                                 }
                                 EvaluationStrategy::Lazy => {
                                     // For lazy operators, add special instruction
-                                    compiled_instructions
-                                        .push(Instruction::EvaluateLazyOperator(*op_type, args));
+                                    compiled_instructions.push(Instruction::LazyOp(*op_type, args));
                                 }
                             }
                         }
 
                         Token::Array(items) => {
                             let count = items.len();
-                            compiled_instructions.push(Instruction::CollectArray(count));
+                            compiled_instructions.push(Instruction::Array(count));
                             for item in items.iter() {
-                                compiled_instructions.push(Instruction::Evaluate(item));
+                                compiled_instructions.push(Instruction::Eval(item));
                             }
                         }
 
@@ -163,20 +158,20 @@ impl<'a> InstructionStack<'a> {
             let instruction = &self.instructions[stack_index - 1];
             stack_index -= 1;
             match instruction {
-                Instruction::Evaluate(token) => {
+                Instruction::Eval(token) => {
                     self.process_token(&mut values, token, data, arena)?;
                 }
-                Instruction::CollectArray(count) => {
+                Instruction::Array(count) => {
                     self.collect_array(&mut values, *count, arena)?;
                 }
-                Instruction::CollectOperatorArgs(op_type, count) => {
+                Instruction::OpArgs(op_type, count) => {
                     self.collect_operator_args(&mut values, *op_type, *count, data, arena)?;
                 }
-                Instruction::EvaluateLazyOperator(op_type, args) => {
+                Instruction::LazyOp(op_type, args) => {
                     let result = self.evaluate_lazy_operator(*op_type, args, data, arena)?;
                     values.push(result);
                 }
-                Instruction::CreateArray(items) => {
+                Instruction::ArrayLit(items) => {
                     // Optimization: create array directly from literal values
                     let array_values: Vec<DataValue<'a>> = items.to_vec();
                     let array = DataValue::Array(arena.alloc_slice_fill_iter(array_values));
