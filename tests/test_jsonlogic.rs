@@ -1,4 +1,5 @@
-use datalogic_rs::{DataLogic, DataValueTestExt, LogicError};
+use bumpalo::Bump;
+use datalogic_rs::{DataLogic, DataValue, DataValueExt, LogicError, Number};
 use serde_json::{json, Value as JsonValue};
 use std::env;
 use std::fs;
@@ -11,8 +12,8 @@ struct TestCase {
     description: String,
     rule: JsonValue,
     data: Option<JsonValue>,
-    expected_result: Option<JsonValue>,
-    expected_error: Option<JsonValue>,
+    result: Option<JsonValue>,
+    error: Option<JsonValue>,
     format: Option<String>,
 }
 
@@ -38,16 +39,18 @@ fn parse_test_cases(json_str: &str) -> Vec<TestCase> {
 
             let rule = obj.get("rule").cloned().unwrap_or(JsonValue::Null);
             let data = obj.get("data").cloned();
-            let expected_result = obj.get("result").cloned();
-            let expected_error = obj.get("error").cloned();
-            let format = obj.get("format").and_then(|v| v.as_str()).map(String::from);
+            let result = obj.get("result").cloned();
+            let error = obj.get("error").cloned();
+            let format = obj
+                .get("format")
+                .map(|v| v.as_str().unwrap_or("").to_string());
 
             test_cases.push(TestCase {
                 description,
                 rule,
                 data,
-                expected_result,
-                expected_error,
+                result,
+                error,
                 format,
             });
         }
@@ -67,7 +70,7 @@ fn run_test_case(test_case: &TestCase) -> TestResult<()> {
         Ok(logic) => logic,
         Err(e) => {
             // If we expect an error, check if it's the right type
-            if let Some(expected_error) = &test_case.expected_error {
+            if let Some(expected_error) = &test_case.error {
                 if let Some(error_obj) = expected_error.as_object() {
                     if let Some(error_type) = error_obj.get("type") {
                         if error_type.as_str() == Some("NaN") && e.to_string().contains("NaN") {
@@ -94,51 +97,46 @@ fn run_test_case(test_case: &TestCase) -> TestResult<()> {
         Err(e) => return Err(format!("Failed to parse data: {}", e)),
     };
 
-    // Evaluate the rule using DataLogic's evaluate method
-    let result = match dl.evaluate(&rule_logic, &data) {
-        Ok(value) => value,
-        Err(e) => {
-            // If we expect an error, check if it's the right type
-            if let Some(expected_error) = &test_case.expected_error {
-                if let Some(error_obj) = expected_error.as_object() {
-                    if let Some(error_type) = error_obj.get("type") {
-                        if error_type.as_str() == Some("NaN") {
-                            if let LogicError::NaNError = e {
-                                return Ok(());
-                            } else if let LogicError::ThrownError { type_name } = &e {
-                                if type_name == "NaN" {
-                                    return Ok(());
-                                }
-                            }
-                        } else if error_type.as_str() == Some("Invalid Arguments") {
-                            if let LogicError::InvalidArgumentsError(_) = e {
-                                return Ok(());
-                            }
-                        } else if error_type.as_str() == Some("Unknown Operator") {
-                            if let LogicError::OperatorNotFoundError { operator: _ } = e {
-                                return Ok(());
-                            }
-                        } else if let LogicError::ThrownError { type_name } = &e {
-                            if let Some(expected_type) = error_type.as_str() {
-                                if expected_type == type_name {
-                                    return Ok(());
-                                }
-                            }
+    // Create a new arena for compilation and execution
+    let compiler_arena = Bump::new();
+
+    // Compile the AST to a program
+    let program = match datalogic_rs::compiler::compile(&rule_logic, &compiler_arena) {
+        Ok(prog) => prog,
+        Err(e) => return Err(format!("Failed to compile rule: {}", e)),
+    };
+
+    // Create a data context
+    let context = datalogic_rs::vm_stack::DataContext::new(&data);
+
+    // Create a new arena for VM execution
+    let vm_arena = Bump::new();
+
+    // Execute the program using the VM
+    let result = datalogic_rs::vm_stack::run(&program, &context, &vm_arena);
+
+    // Check for expected errors
+    if let Some(expected_error) = &test_case.error {
+        if let Some(error_obj) = expected_error.as_object() {
+            if let Some(error_type) = error_obj.get("type") {
+                // For now, we're not handling errors from VM execution
+                // This would need to be implemented if the VM returns Result<DataValue, LogicError>
+                if error_type.as_str() == Some("NaN") {
+                    // Check if result is NaN
+                    if let DataValue::Number(Number::Float(f)) = result {
+                        if f.is_nan() {
+                            return Ok(());
                         }
                     }
                 }
+                // Add other error type checks as needed
             }
-            return Err(format!("Failed to evaluate rule: {}", e));
         }
-    };
-
-    // If we expected an error but didn't get one, that's a failure
-    if test_case.expected_error.is_some() {
         return Err(format!("Expected an error but got result: {}", result));
     }
 
     // If a specific result is expected
-    if let Some(expected_result) = &test_case.expected_result {
+    if let Some(expected_result) = &test_case.result {
         // Convert the expected result to DataValue for comparison
         let expected = match dl.parse_data(&expected_result.to_string()) {
             Ok(value) => value,
@@ -146,11 +144,11 @@ fn run_test_case(test_case: &TestCase) -> TestResult<()> {
         };
 
         // Compare the results
-        if result.equals(&expected) {
+        if result.strict_equals(&expected) {
             Ok(())
         } else {
             Err(format!(
-                "Test failed: expected {}, got {}",
+                "Test failed: expected {:?}, got {:?}",
                 expected, result
             ))
         }

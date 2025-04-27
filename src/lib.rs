@@ -3,22 +3,20 @@
 //! This crate provides a fast, memory-efficient implementation of JSONLogic
 //! using DataValue from the datavalue_rs crate.
 
+pub mod compiler;
 pub mod core;
-pub mod engine;
-pub mod operators;
 pub mod value;
+pub mod vm_stack;
 
+use bumpalo::Bump;
 // Re-export the value extension trait for convenient usage
 pub use value::DataValueExt;
 
 // Re-export DataValue and helpers
-pub use datavalue_rs::{helpers, Bump as DataBump, DataValue, Number};
+pub use datavalue_rs::{helpers, DataValue, Number};
 
 // Re-export important parser types
 pub use core::{parser, ASTNode, OperatorType, ParserError};
-
-// Re-export engine evaluation function
-pub use engine::{evaluate, Logic};
 
 use thiserror::Error;
 
@@ -49,7 +47,7 @@ pub enum LogicError {
 
 /// Main interface for JSONLogic operations
 pub struct DataLogic {
-    arena: DataBump,
+    arena: Bump,
 }
 
 impl Default for DataLogic {
@@ -61,9 +59,7 @@ impl Default for DataLogic {
 impl DataLogic {
     /// Creates a new DataLogic instance
     pub fn new() -> Self {
-        Self {
-            arena: DataBump::new(),
-        }
+        Self { arena: Bump::new() }
     }
 
     /// Parses a logic rule from JSON string
@@ -88,87 +84,30 @@ impl DataLogic {
             .map_err(|e| LogicError::ParserError(format!("Failed to parse data: {}", e)))
     }
 
-    /// Evaluates a logic rule against data
-    pub fn evaluate<'a>(
-        &'a self,
-        logic: &'a ASTNode<'a>,
-        data: &'a DataValue<'a>,
-    ) -> Result<DataValue<'a>, LogicError> {
-        let result = evaluate(logic, data, &self.arena)
-            .map_err(|e| LogicError::EvaluationError(e.to_string()))?;
+    /// Demonstrates the VM execution by running simple arithmetic rules
+    /// This is a simplified version for demonstration purposes
+    pub fn demo_vm_arithmetic(&self) -> Result<i64, LogicError> {
+        // Create a simple rule: {"+":[3,4]}
+        let rule_str = r#"{"+":[3,4]}"#;
+        let ast = self.parse_logic(rule_str, None)?;
 
-        Ok(result.clone())
-    }
+        // Directly compile the AST
+        let program = compiler::compile(&ast, &self.arena)
+            .map_err(|e| LogicError::EvaluationError(format!("Compilation failed: {}", e)))?;
 
-    /// Compiles a JSONLogic rule into a precompiled Logic struct with instruction stack
-    ///
-    /// Note: The returned Logic instance is valid only for the lifetime of the DataLogic instance.
-    pub fn compile(&self, rule_str: &str) -> Result<Logic<'_>, LogicError> {
-        match core::parser(rule_str, &self.arena) {
-            Ok(token) => {
-                // Compile the token into an instruction stack
-                let compiled = Logic::new(token, &self.arena)
-                    .map_err(|e| LogicError::ParserError(format!("Compilation error: {}", e)))?;
+        // Create an empty data context
+        let data = self.arena.alloc(DataValue::Null);
+        let context = vm_stack::DataContext::new(data);
 
-                Ok(compiled)
-            }
-            Err(e) => Err(LogicError::ParserError(e.to_string())),
+        // Run the program and return the result
+        let result = vm_stack::run(&program, &context, &self.arena);
+
+        // Convert the result to a simple i64
+        match result {
+            DataValue::Number(Number::Integer(i)) => Ok(i),
+            _ => Err(LogicError::EvaluationError(
+                "Expected integer result".to_string(),
+            )),
         }
-    }
-
-    /// Evaluates a precompiled Logic against data
-    pub fn apply_logic<'a>(
-        &'a self,
-        logic: &'a Logic<'a>,
-        data: &'a DataValue<'a>,
-    ) -> Result<DataValue<'a>, LogicError> {
-        // Use the precompiled instruction stack for evaluation
-        let result = logic
-            .evaluate(data)
-            .map_err(|e| LogicError::EvaluationError(e.to_string()))?;
-
-        Ok(result.clone())
-    }
-
-    /// Parses, compiles, and evaluates a rule in one step
-    pub fn evaluate_rule<'a>(
-        &'a self,
-        rule_str: &str,
-        data: &'a DataValue<'a>,
-    ) -> Result<DataValue<'a>, LogicError> {
-        // Parse directly and evaluate without storing intermediate token
-        match core::parser(rule_str, &self.arena) {
-            Ok(token) => {
-                // Instead of creating a Logic struct, create the CompiledLogic directly
-                // and use it for evaluation
-                let compiled = Logic::new(token, &self.arena)
-                    .map_err(|e| LogicError::ParserError(format!("Compilation error: {}", e)))?;
-
-                let result = compiled
-                    .evaluate(data)
-                    .map_err(|e| LogicError::EvaluationError(e.to_string()))?;
-
-                Ok(result.clone())
-            }
-            Err(e) => Err(LogicError::ParserError(e.to_string())),
-        }
-    }
-
-    /// Reset the arena to free memory
-    pub fn reset(&mut self) {
-        self.arena.reset();
-    }
-}
-
-/// Extension to DataValue for test comparison
-pub trait DataValueTestExt<'a> {
-    /// Compares two DataValues for equality according to JSONLogic rules
-    fn equals(&self, other: &DataValue<'a>) -> bool;
-}
-
-impl<'a> DataValueTestExt<'a> for DataValue<'a> {
-    fn equals(&self, other: &DataValue<'a>) -> bool {
-        use value::loose_equals;
-        loose_equals(self, other)
     }
 }

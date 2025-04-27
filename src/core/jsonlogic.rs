@@ -34,7 +34,7 @@ fn parse_array<'a>(arr: &[DataValue<'a>], arena: &'a Bump) -> Result<ASTNode<'a>
     let mut tokens = Vec::with_capacity(arr.len());
     for item in arr.iter() {
         let token = parse_datavalue_internal(item, arena)?;
-        if matches!(token, ASTNode::Literal(_)) {
+        if matches!(token, ASTNode::Literal(_)) || matches!(token, ASTNode::ArrayLiteral(_)) {
             values.push(item.clone());
             tokens.push(Box::new(token));
         } else {
@@ -106,7 +106,7 @@ fn parse_val<'a>(value: &DataValue<'a>, arena: &'a Bump) -> Result<ASTNode<'a>> 
         DataValue::Array(arr) => {
             if arr.len() > 1 {
                 if let DataValue::Array([DataValue::Number(Number::Integer(i))]) = arr[0] {
-                    let jump = *i as usize;
+                    let jump = (*i).abs() as usize;
                     return Ok(ASTNode::DynamicVariable {
                         path_expr: Box::new(ASTNode::Literal(DataValue::Array(&arr[1..]))),
                         default: None,

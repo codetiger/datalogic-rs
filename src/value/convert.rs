@@ -79,6 +79,36 @@ pub fn coerce_to_number<'a>(value: &DataValue<'a>) -> DataValue<'a> {
     }
 }
 
+pub fn convert_to_number<'a>(value: &DataValue<'a>) -> DataValue<'a> {
+    match *value {
+        DataValue::Number(num) => match num {
+            Number::Integer(i) => helpers::int(i),
+            Number::Float(f) => {
+                if f.fract() == 0.0 {
+                    helpers::int(f as i64)
+                } else {
+                    helpers::float(f)
+                }
+            },
+        },
+        _ => coerce_to_number(value),
+    }
+}
+
+pub fn modulo<'a>(value: &DataValue<'a>, other: &DataValue<'a>) -> DataValue<'a> {
+    match (value, other) {
+        (DataValue::Number(num1), DataValue::Number(num2)) => {
+            if let (Number::Integer(i1), Number::Integer(i2)) = (num1, num2) {
+                helpers::int(i1 % i2)
+            } else {
+                helpers::int(0)
+            }
+        }
+        _ => helpers::int(0),
+    }
+}
+
+
 #[cfg(test)]
 mod tests {
     use bumpalo::Bump;

@@ -210,7 +210,7 @@ pub fn strict_equals<'a>(left: &DataValue<'a>, right: &DataValue<'a>) -> bool {
         return false;
     }
 
-    left == right
+    loose_equals(left, right)
 }
 
 // Helper function to assign a numeric order to value types

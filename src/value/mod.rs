@@ -35,6 +35,12 @@ pub trait DataValueExt<'a> {
     /// Coerce to number according to JSONLogic rules
     fn coerce_to_number(&self) -> DataValue<'a>;
 
+    /// Convert to number according to JSONLogic rules
+    fn convert_to_number(&self) -> DataValue<'a>;
+
+    /// Modulo operation
+    fn modulo(&self, other: &DataValue<'a>) -> DataValue<'a>;
+
     /// Check if key exists in DataValue
     fn key_exists(&self, key: &str) -> bool;
 }
@@ -59,6 +65,14 @@ impl<'a> DataValueExt<'a> for DataValue<'a> {
 
     fn coerce_to_number(&self) -> DataValue<'a> {
         convert::coerce_to_number(self)
+    }
+
+    fn convert_to_number(&self) -> DataValue<'a> {
+        convert::convert_to_number(self)
+    }
+
+    fn modulo(&self, other: &DataValue<'a>) -> DataValue<'a> {
+        convert::modulo(self, other)
     }
 
     fn key_exists(&self, key: &str) -> bool {

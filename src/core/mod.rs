@@ -8,8 +8,6 @@ use std::fmt;
 use std::str::FromStr;
 use thiserror::Error;
 
-use crate::evaluate;
-
 mod tests;
 
 pub mod jsonlogic;
@@ -82,64 +80,6 @@ pub enum OperatorType {
     Substring, // Extract a portion of a string
     Log,       // Log a value (for debugging)
     Custom,    // Custom operator
-}
-
-/// Determines how an operator's arguments should be evaluated
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EvaluationStrategy {
-    /// Evaluate all arguments before calling operator function (eager evaluation)
-    Eager,
-
-    /// Pass raw arguments to operator function to control evaluation (lazy evaluation)
-    Lazy,
-}
-
-impl OperatorType {
-    /// Returns the evaluation strategy for this operator
-    pub fn evaluation_strategy(&self) -> EvaluationStrategy {
-        match self {
-            // Control flow operators with lazy evaluation
-            OperatorType::If
-            | OperatorType::And
-            | OperatorType::Or
-            | OperatorType::NullCoalesce => EvaluationStrategy::Lazy,
-
-            // Not and DoubleBang now use eager evaluation
-            OperatorType::Not | OperatorType::DoubleBang => EvaluationStrategy::Eager,
-
-            // Variables and data access operations
-            OperatorType::Missing | OperatorType::MissingSome | OperatorType::Exists => {
-                EvaluationStrategy::Eager
-            }
-
-            // Array operations that might need special evaluation
-            OperatorType::Map
-            | OperatorType::Filter
-            | OperatorType::Reduce
-            | OperatorType::All
-            | OperatorType::Some
-            | OperatorType::None
-            | OperatorType::Merge
-            | OperatorType::Cat => EvaluationStrategy::Lazy,
-
-            // Comparison operators
-            OperatorType::Equal
-            | OperatorType::StrictEqual
-            | OperatorType::NotEqual
-            | OperatorType::StrictNotEqual
-            | OperatorType::GT
-            | OperatorType::GTE
-            | OperatorType::LT
-            | OperatorType::LTE
-            | OperatorType::In => EvaluationStrategy::Lazy,
-
-            // String operations
-            OperatorType::Substring => EvaluationStrategy::Eager,
-
-            // Default for arithmetic and most other operators - eager evaluation
-            _ => EvaluationStrategy::Eager,
-        }
-    }
 }
 
 impl FromStr for OperatorType {
@@ -373,12 +313,6 @@ pub fn parser<'a>(input: &str, arena: &'a Bump) -> Result<&'a ASTNode<'a>> {
 /// Parse a DataValue into a JSONLogic ASTNode
 pub fn parser_value<'a>(input: &DataValue<'a>, arena: &'a Bump) -> Result<&'a ASTNode<'a>> {
     let node = arena.alloc(jsonlogic::parse_datavalue_internal(input, arena)?);
-    if node.is_static() {
-        // For static tokens, we can try to evaluate them right away and return a literal
-        if let Ok(result) = evaluate(node, &DataValue::Null, arena) {
-            return Ok(arena.alloc(ASTNode::Literal(result.clone())));
-        }
-    }
 
     Ok(node)
 }

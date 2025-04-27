@@ -38,14 +38,14 @@ use datavalue_rs::{DataValue, Number};
 /// assert!(is_truthy(&helpers::string(&arena, "false")));
 /// ```
 pub fn is_truthy<'a>(value: &DataValue<'a>) -> bool {
-    match value {
+    match *value {
         // Explicit falsy values
         DataValue::Null => false,
-        DataValue::Bool(b) => *b,
+        DataValue::Bool(b) => b,
 
         // Numbers - only 0 and NaN are falsy
-        DataValue::Number(Number::Integer(i)) if *i != 0 => true,
-        DataValue::Number(Number::Float(f)) if *f != 0.0 && !f.is_nan() => true,
+        DataValue::Number(Number::Integer(i)) if i != 0 => true,
+        DataValue::Number(Number::Float(f)) if f != 0.0 && !f.is_nan() => true,
         DataValue::Number(_) => false,
 
         // String - only empty string is falsy
